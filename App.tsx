@@ -1,35 +1,76 @@
-import { getKeyHashAndroid, initializeKakaoSDK } from '@react-native-kakao/core';
-import { StatusBar } from 'expo-status-bar';
-import { useEffect } from 'react';
-import { Button, StyleSheet, Text, View } from 'react-native';
-import {login, logout, unlink} from '@react-native-kakao/user';
+import { EXPO_KAKAO_APP_KEY } from "@env"
+import "react-native-gesture-handler"
+import React, { useEffect, useState } from "react"
+import { StyleSheet } from "react-native"
+import { NavigationContainer } from "@react-navigation/native"
+import { createBottomTabNavigator } from "@react-navigation/bottom-tabs"
+import { Ionicons } from "@expo/vector-icons"
+import { SafeAreaProvider } from "react-native-safe-area-context"
+import { initializeKakaoSDK } from "@react-native-kakao/core"
+
+import LoginScreen from "./screens/LoginScreen"
+import MainScreen from "./screens/MainScreen"
+import GoalSettingScreen from "./screens/GoalSettingScreen"
+import FriendsScreen from "./screens/FriendsScreen"
+import ProfileScreen from "./screens/ProfileScreen"
+
+const Tab = createBottomTabNavigator()
 
 export default function App() {
+  const [isLoggedIn, setIsLoggedIn] = useState(false)
+  const [userProfile, setUserProfile] = useState<{ nickname: string; profileImageUrl: string } | null>(null)
+
   useEffect(() => {
-    initializeKakaoSDK('50bd8f2b2fe7234f97dab6d209339b61');
-  })
+    initializeKakaoSDK(EXPO_KAKAO_APP_KEY)
+  }, [])
+
+  const handleLoginSuccess = (profile: { nickname: string; profileImageUrl: string }) => {
+    setIsLoggedIn(true)
+    setUserProfile(profile)
+  }
+
   return (
-    <View style={styles.container}>
-      <Text>Open up App.tsx to start working on your app!</Text>
-      <Button title={'로그인'} onPress={() => {
-        login().then(console.log).catch(console.error)
-      }}/>
-      <Button title={'로그아웃'} onPress={() => {
-        logout().then(console.log).catch(console.error)
-      }}/>
-      <Button title={'회원탈퇴'} onPress={() => {
-        unlink().then(console.log).catch(console.error)
-      }}/>
-      <StatusBar style="auto" />
-    </View>
-  );
+    <SafeAreaProvider>
+      <NavigationContainer>
+        {!isLoggedIn ? (
+          <LoginScreen onLoginSuccess={handleLoginSuccess} />
+        ) : (
+          <Tab.Navigator
+            screenOptions={({ route }) => ({
+              tabBarIcon: ({ focused, color, size }) => {
+                let iconName: keyof typeof Ionicons.glyphMap = "home"
+
+                if (route.name === "Main") {
+                  iconName = focused ? "home" : "home-outline"
+                } else if (route.name === "Goals") {
+                  iconName = focused ? "flag" : "flag-outline"
+                } else if (route.name === "Friends") {
+                  iconName = focused ? "people" : "people-outline"
+                } else if (route.name === "Profile") {
+                  iconName = focused ? "person" : "person-outline"
+                }
+
+                return <Ionicons name={iconName} size={size} color={color} />
+              },
+            })}
+          >
+            <Tab.Screen name="Main" component={MainScreen} />
+            <Tab.Screen name="Goals" component={GoalSettingScreen} />
+            <Tab.Screen name="Friends" component={FriendsScreen} />
+            <Tab.Screen name="Profile" component={ProfileScreen} initialParams={{ userProfile }} />
+          </Tab.Navigator>
+        )}
+      </NavigationContainer>
+    </SafeAreaProvider>
+  )
 }
 
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: '#fff',
-    alignItems: 'center',
-    justifyContent: 'center',
+    backgroundColor: "#fff",
+    alignItems: "center",
+    justifyContent: "center",
   },
-});
+})
+

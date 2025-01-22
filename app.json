@@ -12,6 +12,7 @@
       "resizeMode": "contain",
       "backgroundColor": "#ffffff"
     },
+    "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
       "bundleIdentifier": "com.go2go2"
@@ -27,32 +28,31 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-    [
-      "expo-build-properties",
-      {
-        "android": {
-          "extraMavenRepos": [
-            "https://devrepo.kakao.com/nexus/content/groups/public/"
-          ],
-          "newArchEnabled": true
-        },
-        "ios": {
-          "newArchEnabled": true
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "extraMavenRepos": ["https://devrepo.kakao.com/nexus/content/groups/public/"],
+            "newArchEnabled": true
+          },
+          "ios": {
+            "newArchEnabled": true
+          }
         }
-      }
-    ],
-    [
-      "@react-native-kakao/core",
-      {
-        "nativeAppKey": "50bd8f2b2fe7234f97dab6d209339b61",
-        "android": {    
+      ],
+      [
+        "@react-native-kakao/core",
+        {
+          "nativeAppKey": "${process.env.EXPO_KAKAO_APP_KEY}",
+          "android": {
             "authCodeHandlerActivity": true
-        },
-        "ios": {    
-           "handleKakaoOpenUrl": true   
+          },
+          "ios": {
+            "handleKakaoOpenUrl": true
+          }
         }
-      }
+      ]
     ]
-  ]
   }
 }
+
