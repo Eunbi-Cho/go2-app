@@ -13,16 +13,46 @@
       "backgroundColor": "#ffffff"
     },
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "bundleIdentifier": "com.go2go2"
     },
     "android": {
       "adaptiveIcon": {
         "foregroundImage": "./assets/adaptive-icon.png",
         "backgroundColor": "#ffffff"
-      }
+      },
+      "package": "com.go2go2"
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+    [
+      "expo-build-properties",
+      {
+        "android": {
+          "extraMavenRepos": [
+            "https://devrepo.kakao.com/nexus/content/groups/public/"
+          ],
+          "newArchEnabled": true
+        },
+        "ios": {
+          "newArchEnabled": true
+        }
+      }
+    ],
+    [
+      "@react-native-kakao/core",
+      {
+        "nativeAppKey": "50bd8f2b2fe7234f97dab6d209339b61",
+        "android": {    
+            "authCodeHandlerActivity": true
+        },
+        "ios": {    
+           "handleKakaoOpenUrl": true   
+        }
+      }
+    ]
+  ]
   }
 }
