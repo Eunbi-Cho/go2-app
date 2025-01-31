@@ -91,7 +91,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
             fetchGoals()
           } catch (error) {
             console.error("Error deleting goal:", error)
-            Alert.alert("오류", "목표를 삭제하는 중 오류�� 발생했습니다.")
+            Alert.alert("오류", "목표를 삭제하는 중 오류가 발생했습니다.")
           }
         },
         style: "destructive",
@@ -138,6 +138,8 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
     )
   }
 
+  const today = new Date().getDay()
+
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView
@@ -181,8 +183,18 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
               </TouchableOpacity>
             </View>
             <View style={styles.daysContainer}>
-              {goal.days.map((completed, index) => (
-                <View key={index} style={[styles.dayCircle, completed && styles.completedDay]} />
+              {[1, 2, 3, 4, 5, 6, 0].map((day, index) => (
+                <View
+                  key={index}
+                  style={[
+                    styles.dayCircle,
+                    day === 6 || day === 0 ? styles.weekendCircle : null,
+                    day === today ? styles.todayCircle : null,
+                    goal.days[index] && { backgroundColor: goal.color },
+                  ]}
+                >
+                  {goal.days[index] && <Ionicons name="checkmark" size={24} color="#ffffff" />}
+                </View>
               ))}
             </View>
           </View>
@@ -303,7 +315,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   icon: {
-    fontSize: 24,
+    fontSize: 30,
   },
   goalInfo: {
     flex: 1,
@@ -327,11 +339,17 @@ const styles = StyleSheet.create({
   dayCircle: {
     width: 40,
     height: 40,
-    borderRadius: 14,
-    backgroundColor: "#D1D1D1",
+    borderRadius: 10,
+    backgroundColor: "#d9d9d9",
+    justifyContent: "center",
+    alignItems: "center",
   },
-  completedDay: {
-    backgroundColor: "#387aff",
+  weekendCircle: {
+    backgroundColor: "#FBDFDF",
+  },
+  todayCircle: {
+    borderWidth: 2,
+    borderColor: "#ADADAD",
   },
   addButton: {
     position: "absolute",

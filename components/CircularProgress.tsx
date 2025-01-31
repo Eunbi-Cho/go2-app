@@ -28,6 +28,7 @@ const CircularProgress: React.FC<CircularProgressProps> = ({ size, strokeWidth, 
           strokeDasharray={circumference}
           strokeDashoffset={progressOffset}
           strokeLinecap="round"
+          transform={`rotate(-90, ${size / 2}, ${size / 2})`}
         />
       </Svg>
     </View>

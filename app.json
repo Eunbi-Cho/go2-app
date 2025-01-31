@@ -15,7 +15,11 @@
     "assetBundlePatterns": ["**/*"],
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.go2go2"
+      "bundleIdentifier": "com.go2go2",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "이 앱은 목표 달성 인증을 위해 사진에 접근합니다.",
+        "NSCameraUsageDescription": "이 앱은 목표 달성 인증을 위해 카메라에 접근합니다."
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -38,6 +42,13 @@
           "ios": {
             "newArchEnabled": true
           }
+        }
+      ],
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "이 앱은 목표 달성 인증을 위해 사진에 접근합니다.",
+          "cameraPermission": "이 앱은 목표 달성 인증을 위해 사진에 접근합니다."
         }
       ],
       [
