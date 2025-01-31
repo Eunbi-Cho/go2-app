@@ -2,26 +2,26 @@ import type React from "react"
 import { View, Text, StyleSheet, Image } from "react-native"
 import type { Goal } from "../types/goal"
 import type { Certification } from "../types/certification"
+import type { User } from "../types/user"
 import CircularProgress from "./CircularProgress"
 import { lightenColor } from "../utils/colorUtils"
 
 interface CertificationCardProps {
   certification: Certification
   goals: Goal[]
-  userProfileImage?: string
+  user: User | undefined
 }
 
-const CertificationCard: React.FC<CertificationCardProps> = ({ certification, goals, userProfileImage }) => {
+const CertificationCard: React.FC<CertificationCardProps> = ({ certification, goals, user }) => {
   const goal = goals.find((g) => g.id === certification.goalId)
 
   if (!goal) return null
 
-  const progress = certification.goalProgress
-  const weeklyGoal = certification.goalWeeklyGoal
+  const progress = (goal.progress / goal.weeklyGoal) * 100 // Calculate weekly progress
   const lighterColor = lightenColor(goal.color, 0.6) // 60% lighter
 
-  const profileImageSource = userProfileImage
-    ? { uri: userProfileImage }
+  const profileImageSource = user?.profileImageUrl
+    ? { uri: user.profileImageUrl }
     : require("../assets/default-profile-image.png") // Make sure to add a default image
 
   return (
@@ -42,13 +42,13 @@ const CertificationCard: React.FC<CertificationCardProps> = ({ certification, go
           </Text>
         </View>
         <View style={styles.goalIconContainer}>
-          <CircularProgress size={50} strokeWidth={3} progress={(progress / weeklyGoal) * 100} color={goal.color} />
+          <CircularProgress size={50} strokeWidth={3} progress={progress} color={goal.color} />
           <View style={[styles.iconBackground, { backgroundColor: lighterColor }]}>
             <Text style={styles.goalIcon}>{goal.icon}</Text>
           </View>
         </View>
         <View style={styles.profileImageContainer}>
-            <Image source={profileImageSource} style={styles.profileImage} />
+          <Image source={profileImageSource} style={styles.profileImage} />
         </View>
       </View>
     </View>

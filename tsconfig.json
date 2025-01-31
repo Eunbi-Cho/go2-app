@@ -6,6 +6,13 @@
     "paths": {
       "@env": ["node_modules/react-native-dotenv"]
     }
-  }
+  },
+  "include": [
+    "**/*.ts",
+    "**/*.tsx",
+    "types/.env.d.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
 }
-

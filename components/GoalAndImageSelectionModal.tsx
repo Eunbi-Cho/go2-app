@@ -19,6 +19,7 @@ const GoalAndImageSelectionModal: React.FC<GoalAndImageSelectionModalProps> = ({
   onImageSelected,
 }) => {
   const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null)
+  const isEmpty = goals.length === 0
 
   const handleGoalSelect = (goal: Goal) => {
     setSelectedGoal(goal)
@@ -66,6 +67,7 @@ const GoalAndImageSelectionModal: React.FC<GoalAndImageSelectionModalProps> = ({
     >
       <View style={styles.container}>
         <Text style={styles.title}>어떤 목표를 인증하나요?</Text>
+        {isEmpty && <Text style={styles.congratsMessage}>대단해요, 오늘 모든 목표를 인증했어요!</Text>}
         <FlatList
           data={goals}
           keyExtractor={(item) => item.id}
@@ -81,16 +83,16 @@ const GoalAndImageSelectionModal: React.FC<GoalAndImageSelectionModalProps> = ({
         />
         <View style={styles.buttonContainer}>
           <TouchableOpacity
-            style={[styles.button, !selectedGoal && styles.disabledButton]}
+            style={[styles.button, (!selectedGoal || isEmpty) && styles.disabledButton]}
             onPress={handleImagePick}
-            disabled={!selectedGoal}
+            disabled={!selectedGoal || isEmpty}
           >
             <Text style={styles.buttonText}>갤러리에서 선택</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.button, !selectedGoal && styles.disabledButton]}
+            style={[styles.button, (!selectedGoal || isEmpty) && styles.disabledButton]}
             onPress={handleCameraLaunch}
-            disabled={!selectedGoal}
+            disabled={!selectedGoal || isEmpty}
           >
             <Text style={styles.buttonText}>지금 촬영</Text>
           </TouchableOpacity>
@@ -159,6 +161,13 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 16,
     fontWeight: "bold",
+  },
+  congratsMessage: {
+    fontSize: 16,
+    fontWeight: "medium",
+    textAlign: "center",
+    color: "#535353",
+    marginVertical: 20,
   },
 })
 

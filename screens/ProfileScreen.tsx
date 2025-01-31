@@ -49,10 +49,13 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
         .orderBy("createdAt", "desc")
         .get()
 
-      const goalsData = goalsSnapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      })) as Goal[]
+      const goalsData = goalsSnapshot.docs.map((doc) => {
+        const data = doc.data() as Goal
+        return {
+          ...data,
+          id: doc.id,
+        }
+      })
 
       setGoals(goalsData)
 
@@ -171,54 +174,63 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
         <Text style={styles.name}>{userProfile.nickname}</Text>
         <Text style={styles.sectionTitle}>이번주 목표 현황</Text>
 
-        {goals.map((goal) => (
-          <View key={goal.id} style={styles.goalCard}>
-            <View style={styles.goalHeader}>
-              <View style={styles.iconContainer}>
-                <CircularProgress
-                  size={70}
-                  strokeWidth={5}
-                  progress={(goal.progress / goal.weeklyGoal) * 100}
-                  color={goal.color}
-                />
-                <View style={[styles.subColorContainer, { backgroundColor: `${goal.color}50` }]}>
-                  <Text style={styles.icon}>{goal.icon}</Text>
+        {goals.map((goal) => {
+          const isCompleted = goal.progress >= goal.weeklyGoal
+          return (
+            <View key={goal.id} style={styles.goalCard}>
+              <View style={styles.goalHeader}>
+                <View style={styles.iconContainer}>
+                  <CircularProgress
+                    size={70}
+                    strokeWidth={5}
+                    progress={(goal.progress / goal.weeklyGoal) * 100}
+                    color={goal.color}
+                  />
+                  <View style={[styles.subColorContainer, { backgroundColor: `${goal.color}50` }]}>
+                    <Text style={styles.icon}>{goal.icon}</Text>
+                  </View>
                 </View>
-              </View>
-              <View style={styles.goalInfo}>
-                <Text style={styles.goalTitle}>{goal.name}</Text>
-                <Text style={[styles.goalProgress, { color: goal.color }]}>
-                  주 {goal.progress}/{goal.weeklyGoal}회
-                </Text>
-              </View>
-              <TouchableOpacity
-                style={styles.editButton}
-                onPress={() => {
-                  showActionSheet(goal)
-                }}
-              >
-                <Ionicons name="ellipsis-vertical" size={20} color="#a5a5a5" />
-              </TouchableOpacity>
-            </View>
-            <View style={styles.daysContainer}>
-              {[1, 2, 3, 4, 5, 6, 0].map((day, index) => (
-                <View
-                  key={index}
-                  style={[
-                    styles.dayCircle,
-                    day === 6 || day === 0 ? styles.weekendCircle : null,
-                    day === today ? styles.todayCircle : null,
-                    day === today && todayCertifications.includes(goal.id) && { backgroundColor: goal.color },
-                  ]}
+                <View style={styles.goalInfo}>
+                  <Text style={styles.goalTitle}>{goal.name}</Text>
+                  <Text style={[styles.goalProgress, { color: goal.color }]}>
+                    주 {goal.progress}/{goal.weeklyGoal}회
+                  </Text>
+                </View>
+                <TouchableOpacity
+                  style={styles.editButton}
+                  onPress={() => {
+                    showActionSheet(goal)
+                  }}
                 >
-                  {day === today && todayCertifications.includes(goal.id) && (
-                    <Ionicons name="checkmark" size={24} color="#ffffff" />
-                  )}
+                  <Ionicons name="ellipsis-vertical" size={20} color="#a5a5a5" />
+                </TouchableOpacity>
+              </View>
+              <View style={styles.daysContainer}>
+                {[1, 2, 3, 4, 5, 6, 0].map((day, index) => (
+                  <View
+                    key={index}
+                    style={[
+                      styles.dayCircle,
+                      day === 6 || day === 0 ? styles.weekendCircle : null,
+                      day === today ? styles.todayCircle : null,
+                      day === today && todayCertifications.includes(goal.id) && { backgroundColor: goal.color },
+                    ]}
+                  >
+                    {day === today && todayCertifications.includes(goal.id) && (
+                      <Ionicons name="checkmark" size={24} color="#ffffff" />
+                    )}
+                  </View>
+                ))}
+              </View>
+              {isCompleted && <View style={styles.dimOverlay} />}
+              {isCompleted && (
+                <View style={[styles.achievementBadge, { borderColor: goal.color }]}>
+                  <Text style={[styles.achievementText, { color: goal.color }]}>이번주 목표 달성!</Text>
                 </View>
-              ))}
+              )}
             </View>
-          </View>
-        ))}
+          )
+        })}
       </ScrollView>
 
       <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate("GoalCreation", { userProfile })}>
@@ -304,6 +316,8 @@ const styles = StyleSheet.create({
     borderRadius: 15,
     padding: 15,
     marginBottom: 15,
+    alignItems: "center",
+    justifyContent: "center",
     shadowColor: "#000000",
     shadowOffset: {
       width: 0,
@@ -312,6 +326,13 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.2,
     shadowRadius: 3,
     elevation: 3,
+    overflow: "hidden",
+    position: "relative",
+  },
+  dimOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: "rgba(0, 0, 0, 0.5)",
+    zIndex: 2,
   },
   goalHeader: {
     flexDirection: "row",
@@ -357,10 +378,11 @@ const styles = StyleSheet.create({
     justifyContent: "space-between",
   },
   dayCircle: {
-    width: 40,
-    height: 40,
-    borderRadius: 10,
+    width: 42,
+    height: 42,
+    borderRadius: 16,
     backgroundColor: "#d9d9d9",
+    marginHorizontal: 1,
     justifyContent: "center",
     alignItems: "center",
   },
@@ -369,7 +391,25 @@ const styles = StyleSheet.create({
   },
   todayCircle: {
     borderWidth: 2,
-    borderColor: "#ADADAD",
+    borderColor: "#767676",
+  },
+  achievementBadge: {
+    position: "absolute",
+    // top: "50%",
+    // left: "50%",
+    // transform: [{ translateX: -75 }, { translateY: -15 }, { rotate: "-15deg" }],
+    backgroundColor: "#ffffff",
+    paddingHorizontal: 15,
+    paddingVertical: 10,
+    borderRadius: 12,
+    borderWidth: 3,
+    justifyContent: "center",
+    alignItems: "center",
+    zIndex: 3,
+  },
+  achievementText: {
+    fontSize: 20,
+    fontWeight: "bold",
   },
   addButton: {
     position: "absolute",

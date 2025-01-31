@@ -9,6 +9,7 @@ import GoalAndImageSelectionModal from "../components/GoalAndImageSelectionModal
 import CertificationCard from "../components/CertificationCard"
 import type { Goal } from "../types/goal"
 import type { Certification } from "../types/certification"
+import type { User } from "../types/user"
 
 export default function HomeScreen() {
   const [remainingTime, setRemainingTime] = useState<string>("")
@@ -17,6 +18,7 @@ export default function HomeScreen() {
   const [goals, setGoals] = useState<Goal[]>([])
   const [certifications, setCertifications] = useState<Certification[]>([])
   const [todayCertifiedGoals, setTodayCertifiedGoals] = useState<string[]>([])
+  const [users, setUsers] = useState<{ [key: string]: User }>({})
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -46,40 +48,43 @@ export default function HomeScreen() {
   }, [])
 
   const fetchCertifications = useCallback(async () => {
-    const currentUser = auth().currentUser
-    if (!currentUser) return
-
     const today = new Date()
     today.setHours(0, 0, 0, 0)
 
     const certificationsSnapshot = await firestore()
       .collection("certifications")
-      .where("userId", "==", currentUser.uid)
       .where("timestamp", ">=", today)
       .orderBy("timestamp", "desc")
       .get()
 
-    const certificationsData = await Promise.all(
-      certificationsSnapshot.docs.map(async (doc) => {
-        const certData = doc.data() as Omit<Certification, "id">
-        const goalDoc = await firestore().collection("goals").doc(certData.goalId).get()
-        const goalData = goalDoc.data() as Goal
-        const userDoc = await firestore().collection("users").doc(certData.userId).get()
-        const userData = userDoc.data()
-        return {
-          id: doc.id,
-          ...certData,
-          goalProgress: goalData.progress,
-          goalWeeklyGoal: goalData.weeklyGoal,
-          userProfileImage: userData?.profileImageUrl,
-        } as Certification & { userProfileImage?: string }
-      }),
-    )
+    const certificationsData = certificationsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+    })) as Certification[]
+
     setCertifications(certificationsData)
 
-    // Update today's certified goals
-    const certifiedGoalIds = certificationsData.map((cert) => cert.goalId)
-    setTodayCertifiedGoals(certifiedGoalIds)
+    // Fetch users data
+    const userIds = [...new Set(certificationsData.map((cert) => cert.userId))]
+    const usersData: { [key: string]: User } = {}
+    await Promise.all(
+      userIds.map(async (userId) => {
+        const userDoc = await firestore().collection("users").doc(userId).get()
+        if (userDoc.exists) {
+          usersData[userId] = userDoc.data() as User
+        }
+      }),
+    )
+    setUsers(usersData)
+
+    // Update today's certified goals for the current user
+    const currentUser = auth().currentUser
+    if (currentUser) {
+      const userCertifiedGoals = certificationsData
+        .filter((cert) => cert.userId === currentUser.uid)
+        .map((cert) => cert.goalId)
+      setTodayCertifiedGoals(userCertifiedGoals)
+    }
   }, [])
 
   useFocusEffect(
@@ -113,17 +118,20 @@ export default function HomeScreen() {
       const selectedGoal = goals.find((goal) => goal.id === goalId)
       if (!selectedGoal) return
 
+      const newProgress = selectedGoal.progress + 1
+      const progressPercentage = (newProgress / selectedGoal.weeklyGoal) * 100
+
       const newCertification: Omit<Certification, "id"> = {
         userId: currentUser.uid,
         goalId: goalId,
         imageUrl: imageUrl,
         timestamp: timestamp,
-        goalProgress: selectedGoal.progress + 1,
+        goalProgress: progressPercentage,
         goalWeeklyGoal: selectedGoal.weeklyGoal,
       }
 
       const docRef = await firestore().collection("certifications").add(newCertification)
-      const addedCertification: Certification = { ...newCertification, id: docRef.id }
+      const addedCertification: Certification = { id: docRef.id, ...newCertification }
 
       setCertifications((prev) => [addedCertification, ...prev])
       setTodayCertifiedGoals((prev) => [...prev, goalId])
@@ -156,12 +164,7 @@ export default function HomeScreen() {
 
         <View style={styles.certificationContainer}>
           {certifications.map((cert) => (
-            <CertificationCard
-              key={cert.id}
-              certification={cert}
-              goals={goals}
-              userProfileImage={cert.userProfileImage}
-            />
+            <CertificationCard key={cert.id} certification={cert} goals={goals} user={users[cert.userId]} />
           ))}
         </View>
       </ScrollView>
