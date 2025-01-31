@@ -45,7 +45,7 @@ const MainTabs = ({ userProfile }: MainTabsProps) => {
         tabBarShowLabel: false,
         headerShown: false,
         tabBarStyle: {
-          backgroundColor: "#ffffff",
+          backgroundColor: "#F3F3F3",
           borderTopWidth: 0,
           elevation: 0,
           shadowOpacity: 0,

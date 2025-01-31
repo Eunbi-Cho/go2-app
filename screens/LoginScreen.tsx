@@ -2,6 +2,8 @@ import type React from "react"
 import { View, StyleSheet, TouchableOpacity, Text, Alert } from "react-native"
 import * as KakaoUser from "@react-native-kakao/user"
 import auth from "@react-native-firebase/auth"
+import firestore from "@react-native-firebase/firestore"
+import storage from "@react-native-firebase/storage"
 
 const firebaseAuth = auth()
 
@@ -10,6 +12,35 @@ interface LoginScreenProps {
 }
 
 const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
+  const uploadProfileImage = async (imageUrl: string, userId: string): Promise<string> => {
+    try {
+      const response = await fetch(imageUrl)
+      const blob = await response.blob()
+      const filename = `profile_${userId}.jpg`
+      const ref = storage().ref().child(`profile_images/${filename}`)
+      await ref.put(blob)
+      return await ref.getDownloadURL()
+    } catch (error) {
+      console.error("Error uploading profile image:", error)
+      return imageUrl // Return original URL if upload fails
+    }
+  }
+
+  const saveUserToFirestore = async (user: any, kakaoProfile: any, firebaseImageUrl: string) => {
+    try {
+      await firestore().collection("users").doc(user.uid).set({
+        uid: user.uid,
+        email: user.email,
+        nickname: kakaoProfile.nickname,
+        profileImageUrl: firebaseImageUrl,
+        friends: [],
+        createdAt: firestore.FieldValue.serverTimestamp(),
+      })
+    } catch (error) {
+      console.error("Error saving user to Firestore:", error)
+    }
+  }
+
   const getProfile = async () => {
     try {
       const result = await KakaoUser.me()
@@ -24,29 +55,20 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       const password = "A!@" + result.id
 
       try {
-        const userCredential = await firebaseAuth.createUserWithEmailAndPassword(email, password)
-        console.log("Firebase signup success", userCredential)
+        let userCredential = await firebaseAuth.signInWithEmailAndPassword(email, password)
+        if (!userCredential.user) {
+          userCredential = await firebaseAuth.createUserWithEmailAndPassword(email, password)
+        }
+
+        const firebaseImageUrl = await uploadProfileImage(result.profileImageUrl ?? "", userCredential.user.uid)
+        await saveUserToFirestore(userCredential.user, result, firebaseImageUrl)
 
         onLoginSuccess({
           nickname: result.nickname ?? "Unknown",
-          profileImageUrl: result.profileImageUrl ?? "",
+          profileImageUrl: firebaseImageUrl,
         })
       } catch (firebaseError: any) {
-        if (firebaseError.code === "auth/email-already-in-use") {
-          try {
-            const signInResult = await firebaseAuth.signInWithEmailAndPassword(email, password)
-            console.log("Firebase signin success", signInResult)
-
-            onLoginSuccess({
-              nickname: result.nickname ?? "Unknown",
-              profileImageUrl: result.profileImageUrl ?? "",
-            })
-          } catch (signInError) {
-            console.error("Firebase sign-in failed", signInError)
-          }
-        } else {
-          console.error("Firebase auth failed", firebaseError)
-        }
+        console.error("Firebase auth failed", firebaseError)
       }
     } catch (error: any) {
       console.log(`GetProfile Fail(code:${error.code})`, error.message)
@@ -83,18 +105,18 @@ const styles = StyleSheet.create({
     flex: 1,
     justifyContent: "center",
     alignItems: "center",
-    backgroundColor: "#F5FCFF",
+    backgroundColor: "#f8f8f8",
     padding: 20,
   },
   title: {
     fontSize: 32,
     fontWeight: "bold",
     marginBottom: 10,
-    color: "#333",
+    color: "#000000",
   },
   subtitle: {
     fontSize: 16,
-    color: "#666",
+    color: "#000000",
     marginBottom: 30,
     textAlign: "center",
   },
@@ -106,7 +128,7 @@ const styles = StyleSheet.create({
     alignItems: "center",
   },
   buttonText: {
-    color: "#000",
+    color: "#000000",
     fontSize: 16,
     fontWeight: "bold",
   },

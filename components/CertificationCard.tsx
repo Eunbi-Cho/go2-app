@@ -8,9 +8,10 @@ import { lightenColor } from "../utils/colorUtils"
 interface CertificationCardProps {
   certification: Certification
   goals: Goal[]
+  userProfileImage?: string
 }
 
-const CertificationCard: React.FC<CertificationCardProps> = ({ certification, goals }) => {
+const CertificationCard: React.FC<CertificationCardProps> = ({ certification, goals, userProfileImage }) => {
   const goal = goals.find((g) => g.id === certification.goalId)
 
   if (!goal) return null
@@ -18,6 +19,10 @@ const CertificationCard: React.FC<CertificationCardProps> = ({ certification, go
   const progress = certification.goalProgress
   const weeklyGoal = certification.goalWeeklyGoal
   const lighterColor = lightenColor(goal.color, 0.6) // 60% lighter
+
+  const profileImageSource = userProfileImage
+    ? { uri: userProfileImage }
+    : require("../assets/default-profile-image.png") // Make sure to add a default image
 
   return (
     <View style={styles.card}>
@@ -37,10 +42,13 @@ const CertificationCard: React.FC<CertificationCardProps> = ({ certification, go
           </Text>
         </View>
         <View style={styles.goalIconContainer}>
-          <CircularProgress size={50} strokeWidth={5} progress={(progress / weeklyGoal) * 100} color={goal.color} />
+          <CircularProgress size={50} strokeWidth={3} progress={(progress / weeklyGoal) * 100} color={goal.color} />
           <View style={[styles.iconBackground, { backgroundColor: lighterColor }]}>
             <Text style={styles.goalIcon}>{goal.icon}</Text>
           </View>
+        </View>
+        <View style={styles.profileImageContainer}>
+            <Image source={profileImageSource} style={styles.profileImage} />
         </View>
       </View>
     </View>
@@ -79,29 +87,47 @@ const styles = StyleSheet.create({
   },
   dateTimeText: {
     color: "#ffffff",
-    fontSize: 18,
+    fontSize: 16,
     fontWeight: "bold",
   },
   goalIconContainer: {
     position: "absolute",
     top: 10,
-    left: 10,
+    left: 36,
     width: 50,
     height: 50,
+    zIndex: 3,
+    alignItems: "center",
+    justifyContent: "center",
   },
   iconBackground: {
     position: "absolute",
-    top: 5,
-    left: 5,
-    width: 40,
-    height: 40,
-    borderRadius: 20,
+    width: 45,
+    height: 45,
+    borderRadius: 30,
     justifyContent: "center",
     alignItems: "center",
   },
   goalIcon: {
     fontSize: 20,
     color: "#000000",
+  },
+  profileImageContainer: {
+    position: "absolute",
+    top: 10,
+    left: 10,
+    width: 50,
+    height: 50,
+    borderRadius: 25,
+    borderWidth: 3,
+    borderColor: "#ffffff",
+    overflow: "hidden",
+    zIndex: 2,
+  },
+  profileImage: {
+    width: "100%",
+    height: "100%",
+    resizeMode: "cover",
   },
 })
 

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-nati
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useFocusEffect } from "@react-navigation/native"
 import firestore from "@react-native-firebase/firestore"
+import storage from "@react-native-firebase/storage"
 import auth from "@react-native-firebase/auth"
 import GoalAndImageSelectionModal from "../components/GoalAndImageSelectionModal"
 import CertificationCard from "../components/CertificationCard"
@@ -63,12 +64,15 @@ export default function HomeScreen() {
         const certData = doc.data() as Omit<Certification, "id">
         const goalDoc = await firestore().collection("goals").doc(certData.goalId).get()
         const goalData = goalDoc.data() as Goal
+        const userDoc = await firestore().collection("users").doc(certData.userId).get()
+        const userData = userDoc.data()
         return {
           id: doc.id,
           ...certData,
           goalProgress: goalData.progress,
           goalWeeklyGoal: goalData.weeklyGoal,
-        } as Certification
+          userProfileImage: userData?.profileImageUrl,
+        } as Certification & { userProfileImage?: string }
       }),
     )
     setCertifications(certificationsData)
@@ -89,57 +93,75 @@ export default function HomeScreen() {
     setShowModal(true)
   }
 
+  const uploadImage = async (uri: string): Promise<string> => {
+    const response = await fetch(uri)
+    const blob = await response.blob()
+    const filename = `certification_${Date.now()}.jpg`
+    const ref = storage().ref().child(`certification_images/${filename}`)
+    await ref.put(blob)
+    return await ref.getDownloadURL()
+  }
+
   const handleImageUpload = async (goalId: string, imageUri: string) => {
     const currentUser = auth().currentUser
     if (!currentUser) return
 
-    const timestamp = firestore.Timestamp.now()
+    try {
+      const timestamp = firestore.Timestamp.now()
+      const imageUrl = await uploadImage(imageUri)
 
-    const selectedGoal = goals.find((goal) => goal.id === goalId)
-    if (!selectedGoal) return
+      const selectedGoal = goals.find((goal) => goal.id === goalId)
+      if (!selectedGoal) return
 
-    const newCertification: Omit<Certification, "id"> = {
-      userId: currentUser.uid,
-      goalId: goalId,
-      imageUrl: imageUri,
-      timestamp: timestamp,
-      goalProgress: selectedGoal.progress + 1,
-      goalWeeklyGoal: selectedGoal.weeklyGoal,
+      const newCertification: Omit<Certification, "id"> = {
+        userId: currentUser.uid,
+        goalId: goalId,
+        imageUrl: imageUrl,
+        timestamp: timestamp,
+        goalProgress: selectedGoal.progress + 1,
+        goalWeeklyGoal: selectedGoal.weeklyGoal,
+      }
+
+      const docRef = await firestore().collection("certifications").add(newCertification)
+      const addedCertification: Certification = { ...newCertification, id: docRef.id }
+
+      setCertifications((prev) => [addedCertification, ...prev])
+      setTodayCertifiedGoals((prev) => [...prev, goalId])
+
+      // Update goal progress and days
+      const goalRef = firestore().collection("goals").doc(goalId)
+      await firestore().runTransaction(async (transaction) => {
+        const goalDoc = await transaction.get(goalRef)
+        if (!goalDoc.exists) return
+
+        const goalData = goalDoc.data() as Goal
+        const newProgress = Math.min(goalData.progress + 1, goalData.weeklyGoal)
+        const dayOfWeek = timestamp.toDate().getDay()
+        const newDays = [...goalData.days]
+        newDays[dayOfWeek === 0 ? 6 : dayOfWeek - 1] = true // Adjust for Sunday being 0
+        transaction.update(goalRef, { progress: newProgress, days: newDays })
+      })
+
+      await fetchGoals()
+    } catch (error) {
+      console.error("Error uploading image:", error)
     }
-
-    const docRef = await firestore().collection("certifications").add(newCertification)
-    const addedCertification: Certification = { ...newCertification, id: docRef.id }
-
-    setCertifications((prev) => [addedCertification, ...prev])
-    setTodayCertifiedGoals((prev) => [...prev, goalId])
-    setShowModal(false)
-
-    // Update goal progress and days
-    const goalRef = firestore().collection("goals").doc(goalId)
-    await firestore().runTransaction(async (transaction) => {
-      const goalDoc = await transaction.get(goalRef)
-      if (!goalDoc.exists) return
-
-      const goalData = goalDoc.data() as Goal
-      const newProgress = Math.min(goalData.progress + 1, goalData.weeklyGoal)
-      const dayOfWeek = timestamp.toDate().getDay()
-      const newDays = [...goalData.days]
-      newDays[dayOfWeek === 0 ? 6 : dayOfWeek - 1] = true // Adjust for Sunday being 0
-      transaction.update(goalRef, { progress: newProgress, days: newDays })
-    })
-
-    fetchGoals()
   }
 
   return (
     <SafeAreaView style={styles.container}>
-      <Text style={[styles.timeText, isTimeAlmostUp && styles.timeTextAlmostUp]}>{remainingTime}</Text>
-      <Text style={styles.headerText}>오늘의 목표 달성을 인증하세요</Text>
+      <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
+        <Text style={[styles.timeText, isTimeAlmostUp && styles.timeTextAlmostUp]}>{remainingTime}</Text>
+        <Text style={styles.headerText}>오늘의 목표 달성을 인증하세요</Text>
 
-      <ScrollView style={styles.scrollView} showsVerticalScrollIndicator={false}>
-        <View style={styles.gridContainer}>
+        <View style={styles.certificationContainer}>
           {certifications.map((cert) => (
-            <CertificationCard key={cert.id} certification={cert} goals={goals} />
+            <CertificationCard
+              key={cert.id}
+              certification={cert}
+              goals={goals}
+              userProfileImage={cert.userProfileImage}
+            />
           ))}
         </View>
       </ScrollView>
@@ -149,10 +171,13 @@ export default function HomeScreen() {
       </TouchableOpacity>
 
       <GoalAndImageSelectionModal
-        visible={showModal}
+        isVisible={showModal}
         goals={goals.filter((goal) => !todayCertifiedGoals.includes(goal.id))}
         onClose={() => setShowModal(false)}
-        onImageSelected={handleImageUpload}
+        onImageSelected={(goalId: string, imageUri: string) => {
+          setShowModal(false)
+          handleImageUpload(goalId, imageUri)
+        }}
       />
     </SafeAreaView>
   )
@@ -161,15 +186,19 @@ export default function HomeScreen() {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: "#f8f8f8",
+  },
+  scrollContent: {
+    flexGrow: 1,
     paddingHorizontal: 20,
+    paddingTop: 30,
+    paddingBottom: 100,
   },
   timeText: {
     fontSize: 42,
     fontWeight: "bold",
     textAlign: "center",
     color: "#387aff",
-    marginTop: 20,
     marginBottom: 10,
   },
   timeTextAlmostUp: {
@@ -182,22 +211,21 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     color: "#000000",
   },
-  scrollView: {
-    flex: 1,
-  },
-  gridContainer: {
-    paddingVertical: 10,
+  certificationContainer: {
+    marginTop: 10,
   },
   uploadButton: {
+    position: "absolute",
+    bottom: 30,
+    left: 20,
+    right: 20,
     backgroundColor: "#387aff",
     padding: 15,
-    marginVertical: 20,
     borderRadius: 10,
     alignItems: "center",
   },
   uploadButtonText: {
     color: "#ffffff",
-    textAlign: "center",
     fontSize: 16,
     fontWeight: "bold",
   },

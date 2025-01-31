@@ -33,6 +33,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
   const [refreshing, setRefreshing] = useState(false)
   const [showAndroidModal, setShowAndroidModal] = useState(false)
   const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null)
+  const [todayCertifications, setTodayCertifications] = useState<string[]>([])
 
   const fetchGoals = useCallback(async () => {
     try {
@@ -54,8 +55,25 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
       })) as Goal[]
 
       setGoals(goalsData)
+
+      // Fetch today's certifications
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      const tomorrow = new Date(today)
+      tomorrow.setDate(tomorrow.getDate() + 1)
+
+      const certificationsSnapshot = await firestore()
+        .collection("certifications")
+        .where("userId", "==", currentUser.uid)
+        .where("timestamp", ">=", today)
+        .where("timestamp", "<", tomorrow)
+        .orderBy("timestamp", "asc")
+        .get()
+
+      const todayCertificationIds = certificationsSnapshot.docs.map((doc) => doc.data().goalId)
+      setTodayCertifications(todayCertificationIds)
     } catch (error) {
-      console.error("Error fetching goals:", error)
+      console.error("Error fetching goals and certifications:", error)
     } finally {
       setIsLoading(false)
       setRefreshing(false)
@@ -190,10 +208,12 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
                     styles.dayCircle,
                     day === 6 || day === 0 ? styles.weekendCircle : null,
                     day === today ? styles.todayCircle : null,
-                    goal.days[index] && { backgroundColor: goal.color },
+                    day === today && todayCertifications.includes(goal.id) && { backgroundColor: goal.color },
                   ]}
                 >
-                  {goal.days[index] && <Ionicons name="checkmark" size={24} color="#ffffff" />}
+                  {day === today && todayCertifications.includes(goal.id) && (
+                    <Ionicons name="checkmark" size={24} color="#ffffff" />
+                  )}
                 </View>
               ))}
             </View>
@@ -245,7 +265,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#ffffff",
+    backgroundColor: "#f8f8f8",
   },
   scrollContent: {
     alignItems: "center",

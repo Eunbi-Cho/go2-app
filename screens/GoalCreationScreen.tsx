@@ -159,9 +159,9 @@ export const GoalCreationScreen: React.FC<GoalCreationScreenProps> = ({ navigati
 const styles = StyleSheet.create({
   container: {
     flex: 1,
-    backgroundColor: "#ffffff",
     paddingHorizontal: 20,
     paddingTop: 20,
+    backgroundColor: "#f8f8f8",
   },
   backButton: {
     position: "absolute",
