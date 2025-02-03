@@ -6,6 +6,7 @@ import type { User } from "../types/user"
 import CircularProgress from "./CircularProgress"
 import { lightenColor } from "../utils/colorUtils"
 import SkeletonLoader from "./SkeletonLoader"
+import type React from "react" // Added import for React
 
 interface CertificationCardProps {
   certification: Certification

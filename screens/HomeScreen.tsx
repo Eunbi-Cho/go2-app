@@ -23,6 +23,7 @@ export default function HomeScreen() {
   const [users, setUsers] = useState<{ [key: string]: User }>({})
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [userChallengeGroup, setUserChallengeGroup] = useState<string | null>(null)
+  const [groupGoals, setGroupGoals] = useState<{ [userId: string]: Goal[] }>({})
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -87,11 +88,13 @@ export default function HomeScreen() {
       .where("timestamp", "<", tomorrow)
       .orderBy("timestamp", "desc")
 
+    let memberIds: string[] = [currentUser.uid]
+
     if (groupId) {
       console.log("User's challenge group ID:", groupId)
       // Fetch group members
       const membersSnapshot = await firestore().collection("users").where("challengeGroupId", "==", groupId).get()
-      const memberIds = membersSnapshot.docs.map((doc) => doc.id)
+      memberIds = membersSnapshot.docs.map((doc) => doc.id)
       console.log("Group member IDs:", memberIds)
 
       certificationsQuery = certificationsQuery.where("userId", "in", memberIds)
@@ -124,6 +127,18 @@ export default function HomeScreen() {
     console.log("Fetched certifications:", certificationsData)
 
     setUserCertifications(certificationsData)
+
+    // Fetch group members' goals
+    const groupGoals: { [userId: string]: Goal[] } = {}
+    const groupGoalsSnapshot = await firestore().collection("goals").where("userId", "in", memberIds).get()
+    groupGoalsSnapshot.docs.forEach((doc) => {
+      const goal = { id: doc.id, ...doc.data() } as Goal
+      if (!groupGoals[goal.userId]) {
+        groupGoals[goal.userId] = []
+      }
+      groupGoals[goal.userId].push(goal)
+    })
+    setGroupGoals(groupGoals)
 
     setIsLoading(false)
   }, [])
@@ -253,9 +268,17 @@ export default function HomeScreen() {
         {certifications.length > 0 ? (
           certifications.map((cert) => {
             console.log(`Rendering certification:`, cert)
+            const userGoals = groupGoals[cert.userId] || []
             const certGoal =
-              goals.find((g) => g.id === cert.goalId) ||
-              ({ id: cert.goalId, icon: "🎯", color: "#387aff", name: "Group Goal" } as Goal)
+              userGoals.find((g) => g.id === cert.goalId) ||
+              ({
+                id: cert.goalId,
+                icon: "🎯",
+                color: "#387aff",
+                name: "Group Goal",
+                progress: 0,
+                weeklyGoal: 1,
+              } as Goal)
             return (
               <CertificationCard
                 key={cert.id}
@@ -286,7 +309,7 @@ export default function HomeScreen() {
       </ScrollView>
 
       <TouchableOpacity style={styles.uploadButton} onPress={handleUploadPress}>
-        <Text style={styles.uploadButtonText}>+ 인증샷 올리기</Text>
+        <Text style={styles.uploadButtonText}>인증샷 올리기</Text>
       </TouchableOpacity>
 
       <GoalAndImageSelectionModal
