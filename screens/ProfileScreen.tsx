@@ -15,25 +15,58 @@ import {
   Modal,
 } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
-import { useFocusEffect } from "@react-navigation/native"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
+import { useFocusEffect } from "@react-navigation/native"
 import firestore from "@react-native-firebase/firestore"
 import auth from "@react-native-firebase/auth"
+import * as KakaoUser from "@react-native-kakao/user"
 import { Ionicons } from "@expo/vector-icons"
 import type { Goal } from "../types/goal"
 import CircularProgress from "../components/CircularProgress"
-import type { RootStackParamList } from "../types/navigation"
+import type { RootStackParamList, UserProfile } from "../types/navigation"
+import { startOfWeek } from "date-fns"
+
+type ProfileParams = {
+  userProfile: UserProfile
+  handleLogout: () => void
+}
 
 type ProfileScreenProps = NativeStackScreenProps<RootStackParamList, "Profile">
 
 const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
-  const { userProfile } = route.params
+  const { userProfile, handleLogout } = route.params as ProfileParams
   const [goals, setGoals] = useState<Goal[]>([])
+  const MAX_GOALS = 4
   const [isLoading, setIsLoading] = useState(true)
   const [refreshing, setRefreshing] = useState(false)
   const [showAndroidModal, setShowAndroidModal] = useState(false)
   const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null)
   const [todayCertifications, setTodayCertifications] = useState<string[]>([])
+  const [weekCertifications, setWeekCertifications] = useState<{ [goalId: string]: { [day: number]: boolean } }>({})
+
+  const handleLogoutPress = () => {
+    Alert.alert("로그아웃", "정말 로그아웃 하시겠습니까?", [
+      {
+        text: "취소",
+        style: "cancel",
+      },
+      {
+        text: "로그아웃",
+        style: "destructive",
+        onPress: async () => {
+          try {
+            handleLogout()
+            await KakaoUser.logout()
+            await auth().signOut()
+          } catch (error) {
+            console.error("로그아웃 중 오류 발생:", error)
+            // 에러가 발생하더라도 앱의 로그아웃은 진행
+            handleLogout()
+          }
+        },
+      },
+    ])
+  }
 
   const fetchGoals = useCallback(async () => {
     try {
@@ -49,17 +82,32 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
         .orderBy("createdAt", "desc")
         .get()
 
-      const goalsData = goalsSnapshot.docs.map((doc) => {
-        const data = doc.data() as Goal
-        return {
-          ...data,
-          id: doc.id,
-        }
-      })
+      const currentDate = new Date()
+      const currentWeekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
 
-      setGoals(goalsData)
+      const goalsData = await Promise.all(
+        goalsSnapshot.docs.map(async (doc) => {
+          const data = doc.data() as Goal
+          const goalId = doc.id
+          let updatedData = { ...data, id: goalId }
 
-      // Fetch today's certifications
+          if (!data.lastResetDate || new Date(data.lastResetDate) < currentWeekStart) {
+            updatedData = {
+              ...updatedData,
+              progress: 0,
+              days: Array(7).fill(false),
+              lastResetDate: currentDate,
+            }
+
+            await firestore().collection("goals").doc(goalId).update(updatedData)
+          }
+
+          return updatedData
+        }),
+      )
+
+      setGoals(sortGoalsByAchievementRate(goalsData))
+
       const today = new Date()
       today.setHours(0, 0, 0, 0)
       const tomorrow = new Date(today)
@@ -75,6 +123,34 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
 
       const todayCertificationIds = certificationsSnapshot.docs.map((doc) => doc.data().goalId)
       setTodayCertifications(todayCertificationIds)
+
+      const fetchWeekCertifications = async (userId: string) => {
+        const currentDate = new Date()
+        const currentWeekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
+        const certifications = await firestore()
+          .collection("certifications")
+          .where("userId", "==", userId)
+          .where("timestamp", ">=", currentWeekStart)
+          .where("timestamp", "<=", currentDate)
+          .get()
+
+        const weekCerts: { [goalId: string]: { [day: number]: boolean } } = {}
+        certifications.docs.forEach((doc) => {
+          const certData = doc.data()
+          const certDate = certData.timestamp.toDate()
+          const dayIndex = (certDate.getDay() + 6) % 7 // 월요일을 0으로 시작하는 인덱스
+          const goalId = certData.goalId
+
+          if (!weekCerts[goalId]) {
+            weekCerts[goalId] = {}
+          }
+          weekCerts[goalId][dayIndex] = true
+        })
+
+        setWeekCertifications(weekCerts)
+      }
+
+      await fetchWeekCertifications(currentUser.uid)
     } catch (error) {
       console.error("Error fetching goals and certifications:", error)
     } finally {
@@ -82,6 +158,14 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
       setRefreshing(false)
     }
   }, [])
+
+  const sortGoalsByAchievementRate = (goalsToSort: Goal[]) => {
+    return [...goalsToSort].sort((a, b) => {
+      const rateA = (a.progress / a.weeklyGoal) * 100
+      const rateB = (b.progress / b.weeklyGoal) * 100
+      return rateA - rateB
+    })
+  }
 
   useFocusEffect(
     useCallback(() => {
@@ -150,19 +234,13 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
     )
   }
 
-  if (!userProfile) {
-    return (
-      <View style={styles.container}>
-        <Text>로그인 정보가 없습니다.</Text>
-        <Text>Debug info: {JSON.stringify(route.params)}</Text>
-      </View>
-    )
-  }
-
   const today = new Date().getDay()
 
   return (
     <SafeAreaView style={styles.container}>
+      <TouchableOpacity style={styles.logoutButton} onPress={handleLogoutPress}>
+        <Ionicons name="log-out-outline" size={24} color="#767676" />
+      </TouchableOpacity>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         refreshControl={<RefreshControl refreshing={refreshing} onRefresh={onRefresh} />}
@@ -178,6 +256,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
           const isCompleted = goal.progress >= goal.weeklyGoal
           return (
             <View key={goal.id} style={styles.goalCard}>
+              {isCompleted && <View style={styles.dimOverlay} />}
               <View style={styles.goalHeader}>
                 <View style={styles.iconContainer}>
                   <CircularProgress
@@ -213,16 +292,13 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
                       styles.dayCircle,
                       day === 6 || day === 0 ? styles.weekendCircle : null,
                       day === today ? styles.todayCircle : null,
-                      day === today && todayCertifications.includes(goal.id) && { backgroundColor: goal.color },
+                      weekCertifications[goal.id]?.[index] && { backgroundColor: goal.color },
                     ]}
                   >
-                    {day === today && todayCertifications.includes(goal.id) && (
-                      <Ionicons name="checkmark" size={24} color="#ffffff" />
-                    )}
+                    {weekCertifications[goal.id]?.[index] && <Ionicons name="checkmark" size={24} color="#ffffff" />}
                   </View>
                 ))}
               </View>
-              {isCompleted && <View style={styles.dimOverlay} />}
               {isCompleted && (
                 <View style={[styles.achievementBadge, { borderColor: goal.color }]}>
                   <Text style={[styles.achievementText, { color: goal.color }]}>이번주 목표 달성!</Text>
@@ -233,8 +309,16 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
         })}
       </ScrollView>
 
-      <TouchableOpacity style={styles.addButton} onPress={() => navigation.navigate("GoalCreation", { userProfile })}>
-        <Text style={styles.addButtonText}>이번달 목표 추가</Text>
+      <TouchableOpacity
+        style={[styles.addButton, goals.length >= MAX_GOALS && styles.disabledButton]}
+        onPress={() => navigation.navigate("GoalCreation", { userProfile })}
+        disabled={goals.length >= MAX_GOALS}
+      >
+        <Text style={styles.addButtonText}>
+          {goals.length >= MAX_GOALS
+            ? "목표는 최대 4개까지 추가 가능해요"
+            : `이번달 목표 추가 (${goals.length}/${MAX_GOALS})`}
+        </Text>
       </TouchableOpacity>
       {Platform.OS === "android" && (
         <Modal
@@ -338,12 +422,14 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     marginBottom: 15,
+    position: "relative",
   },
   iconContainer: {
     position: "relative",
     width: 70,
     height: 70,
     marginRight: 15,
+    zIndex: 1,
   },
   subColorContainer: {
     position: "absolute",
@@ -369,9 +455,12 @@ const styles = StyleSheet.create({
   },
   goalProgress: {
     fontSize: 14,
+    zIndex: 1,
   },
   editButton: {
     padding: 5,
+    zIndex: 3,
+    position: "relative",
   },
   daysContainer: {
     flexDirection: "row",
@@ -395,9 +484,6 @@ const styles = StyleSheet.create({
   },
   achievementBadge: {
     position: "absolute",
-    // top: "50%",
-    // left: "50%",
-    // transform: [{ translateX: -75 }, { translateY: -15 }, { rotate: "-15deg" }],
     backgroundColor: "#ffffff",
     paddingHorizontal: 15,
     paddingVertical: 10,
@@ -408,7 +494,7 @@ const styles = StyleSheet.create({
     zIndex: 3,
   },
   achievementText: {
-    fontSize: 20,
+    fontSize: 16,
     fontWeight: "bold",
   },
   addButton: {
@@ -425,6 +511,7 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 16,
     fontWeight: "bold",
+    textAlign: "center",
   },
   modalOverlay: {
     flex: 1,
@@ -453,6 +540,15 @@ const styles = StyleSheet.create({
   },
   deleteOptionText: {
     color: "#f4583f",
+  },
+  logoutButton: {
+    position: "absolute",
+    top: 80,
+    right: 20,
+    zIndex: 10,
+  },
+  disabledButton: {
+    backgroundColor: "#a7a7a7",
   },
 })
 

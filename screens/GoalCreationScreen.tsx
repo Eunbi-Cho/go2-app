@@ -44,6 +44,8 @@ export const GoalCreationScreen: React.FC<GoalCreationScreenProps> = ({ navigati
         name,
         weeklyGoal,
         userId: currentUser.uid,
+        lastResetDate: new Date(),
+        weeklyProgressHistory: [], // 새로운 필드 추가
       }
 
       if (isEditMode) {
@@ -57,6 +59,7 @@ export const GoalCreationScreen: React.FC<GoalCreationScreenProps> = ({ navigati
             progress: 0,
             days: Array(7).fill(false),
             createdAt: firestore.FieldValue.serverTimestamp(),
+            weeklyProgressHistory: [], // 새로운 필드 추가
           })
         console.log("New goal added successfully:", goalData)
       }
@@ -291,3 +294,4 @@ const styles = StyleSheet.create({
 })
 
 export default GoalCreationScreen
+

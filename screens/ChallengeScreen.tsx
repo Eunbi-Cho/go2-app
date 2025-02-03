@@ -1,26 +1,185 @@
-import { useState, useEffect } from "react"
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, Alert } from "react-native"
+import type { ChallengeHistory } from "../types/challenge"
+import type { Goal } from "../types/goal"
+import type { Certification } from "../types/certification"
+import { useState, useEffect, useCallback } from "react"
+import { View, Text, StyleSheet, Image as RNImage, TouchableOpacity, ScrollView, Alert, TextInput } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import Clipboard from "@react-native-clipboard/clipboard"
 import auth from "@react-native-firebase/auth"
 import firestore from "@react-native-firebase/firestore"
-import { Ionicons } from "@expo/vector-icons"
-import type { ChallengeMember } from "../types/challenge"
-import type { Goal } from "../types/goal"
 import GoalIcons from "../components/GoalIcons"
-import JoinChallengeModal from "../components/JoinChallengeModal"
-import { createChallengeDeepLink } from "../utils/deepLinking"
+import { useNavigation } from "@react-navigation/native"
+import type { RootStackNavigationProp } from "../types/navigation"
+import Svg, { Path } from "react-native-svg"
+
+interface ChallengeMember {
+  id: string
+  userId: string
+  name: string
+  profileImage: string
+  totalProgress: number
+  goals: Goal[]
+}
 
 export default function ChallengeScreen() {
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1)
+  const [currentYear, setCurrentYear] = useState(new Date().getFullYear())
   const [members, setMembers] = useState<ChallengeMember[]>([])
-  const [showJoinModal, setShowJoinModal] = useState(false)
   const [daysLeft, setDaysLeft] = useState(0)
+  const [goals, setGoals] = useState<{ [userId: string]: Goal[] }>({})
+  const [certifications, setCertifications] = useState<{ [userId: string]: Certification[] }>({})
+  const [challengeCode, setChallengeCode] = useState<string | null>(null)
+  const [inputCode, setInputCode] = useState("")
+  const [userChallengeGroup, setUserChallengeGroup] = useState<string | null>(null)
+  const [groupName, setGroupName] = useState("")
+  const [inputGroupName, setInputGroupName] = useState("")
+  const [challengeHistory, setChallengeHistory] = useState<ChallengeHistory | null>(null)
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false)
+  const [currentMonthMembers, setCurrentMonthMembers] = useState<ChallengeMember[]>([])
+  const [historicalData, setHistoricalData] = useState<{ [key: string]: ChallengeHistory }>({})
+
+  const calculateTotalProgress = useCallback((userGoals: Goal[]) => {
+    if (userGoals.length === 0) {
+      console.log("No goals found, returning 0%")
+      return 0
+    }
+
+    const totalProgress = userGoals.reduce((sum, goal) => {
+      const progressPercentage = (goal.progress / goal.weeklyGoal) * 100
+      console.log(
+        `Goal ${goal.id}: progress=${goal.progress}, weeklyGoal=${goal.weeklyGoal}, percentage=${progressPercentage}%`,
+      )
+      return sum + progressPercentage
+    }, 0)
+
+    const result = Math.round(totalProgress / userGoals.length)
+    console.log("Final average progress:", result)
+    return result
+  }, [])
+
+  const updateMemberProgress = useCallback(() => {
+    console.log("Updating member progress")
+    setCurrentMonthMembers((prevMembers) => {
+      return prevMembers.map((member) => {
+        const memberGoals = goals[member.userId] || []
+        console.log(`Calculating progress for member ${member.name}`)
+        const progress = calculateTotalProgress(memberGoals)
+        return {
+          ...member,
+          totalProgress: progress,
+        }
+      })
+    })
+  }, [calculateTotalProgress, goals])
+
+  const fetchChallengeHistory = useCallback(async () => {
+    if (!userChallengeGroup) return
+
+    setIsLoadingHistory(true)
+    try {
+      const historySnapshot = await firestore()
+        .collection("challengeHistory")
+        .where("groupId", "==", userChallengeGroup)
+        .where("year", "==", currentYear)
+        .where("month", "==", currentMonth)
+        .get()
+
+      if (!historySnapshot.empty) {
+        const historyData = historySnapshot.docs[0].data() as ChallengeHistory
+        setHistoricalData((prevData) => ({
+          ...prevData,
+          [`${currentYear}-${currentMonth}`]: historyData,
+        }))
+      }
+    } catch (error) {
+      console.error("Error fetching challenge history:", error)
+    } finally {
+      setIsLoadingHistory(false)
+    }
+  }, [userChallengeGroup, currentYear, currentMonth])
+
+  useEffect(() => {
+    console.log("Current month/year:", currentMonth, currentYear)
+    if (
+      currentYear < new Date().getFullYear() ||
+      (currentYear === new Date().getFullYear() && currentMonth < new Date().getMonth() + 1)
+    ) {
+      console.log("Fetching challenge history")
+      fetchChallengeHistory()
+    } else {
+      console.log("Updating member progress")
+      updateMemberProgress()
+    }
+  }, [currentMonth, currentYear, updateMemberProgress, fetchChallengeHistory])
+
+  const fetchUserGoals = useCallback((userId: string) => {
+    console.log(`Fetching goals for user: ${userId}`)
+    return firestore()
+      .collection("goals")
+      .where("userId", "==", userId)
+      .onSnapshot((snapshot) => {
+        const userGoals = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Goal)
+        console.log(`Goals for user ${userId}:`, userGoals)
+        setGoals((prevGoals) => ({ ...prevGoals, [userId]: userGoals }))
+      })
+  }, [])
+
+  const fetchUserCertifications = useCallback((userId: string) => {
+    return firestore()
+      .collection("certifications")
+      .where("userId", "==", userId)
+      .onSnapshot((snapshot) => {
+        const userCertifications = snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Certification)
+        setCertifications((prevCertifications) => ({ ...prevCertifications, [userId]: userCertifications }))
+      })
+  }, [])
+
+  const fetchChallengeGroup = useCallback(async () => {
+    const currentUser = auth().currentUser
+    if (!currentUser) return
+
+    console.log("Fetching challenge group")
+    const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
+    const userData = userDoc.data()
+    const groupId = userData?.challengeGroupId
+
+    if (groupId) {
+      console.log(`User belongs to challenge group: ${groupId}`)
+      setUserChallengeGroup(groupId)
+      const groupDoc = await firestore().collection("challengeGroups").doc(groupId).get()
+      const groupData = groupDoc.data()
+      setChallengeCode(groupData?.code || null)
+      setGroupName(groupData?.name || "")
+
+      const membersSnapshot = await firestore().collection("users").where("challengeGroupId", "==", groupId).get()
+      const membersData = membersSnapshot.docs.map((doc) => {
+        const memberData = doc.data()
+        return {
+          id: doc.id,
+          userId: doc.id,
+          name: memberData.nickname || "Unknown",
+          profileImage: memberData.profileImageUrl || "",
+          totalProgress: 0,
+          goals: [],
+        }
+      })
+
+      console.log("Challenge group members:", membersData)
+      setCurrentMonthMembers(membersData)
+
+      membersData.forEach((member) => {
+        fetchUserGoals(member.userId)
+        fetchUserCertifications(member.userId)
+      })
+    } else {
+      console.log("User does not belong to any challenge group")
+    }
+  }, [fetchUserGoals, fetchUserCertifications])
 
   useEffect(() => {
     calculateDaysLeft()
-    fetchMembers()
-  }, []) // Removed currentMonth from dependencies
+    fetchChallengeGroup()
+  }, [fetchChallengeGroup])
 
   const calculateDaysLeft = () => {
     const today = new Date()
@@ -29,182 +188,335 @@ export default function ChallengeScreen() {
     setDaysLeft(diff)
   }
 
-  const fetchMembers = async () => {
-    try {
-      const currentUser = auth().currentUser
-      if (!currentUser) return
+  const generateChallengeCode = async () => {
+    const currentUser = auth().currentUser
+    if (!currentUser) return
 
-      const membersSnapshot = await firestore()
-        .collection("challengeMembers")
-        .where("month", "==", currentMonth)
-        .where("year", "==", new Date().getFullYear())
-        .get()
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase()
+    const groupRef = await firestore().collection("challengeGroups").add({
+      code,
+      name: inputGroupName,
+      createdBy: currentUser.uid,
+      createdAt: firestore.FieldValue.serverTimestamp(),
+    })
 
-      const membersData: ChallengeMember[] = await Promise.all(
-        membersSnapshot.docs.map(async (doc) => {
-          const memberData = doc.data()
-          const goalsSnapshot = await firestore().collection("goals").where("userId", "==", memberData.userId).get()
+    await firestore().collection("users").doc(currentUser.uid).update({
+      challengeGroupId: groupRef.id,
+    })
 
-          const goals: Goal[] = goalsSnapshot.docs.map(
-            (goalDoc) =>
-              ({
-                id: goalDoc.id,
-                ...goalDoc.data(),
-              }) as Goal,
-          )
+    setChallengeCode(code)
+    setGroupName(inputGroupName)
+    setUserChallengeGroup(groupRef.id)
+    Clipboard.setString(code)
+    Alert.alert("성공", "챌린지 그룹이 생성되었습니다. 코드가 클립보드에 복사되었습니다.")
+  }
 
-          const goalProgress = goals.map((goal) => (goal.progress / goal.weeklyGoal) * 100)
-          const totalProgress = goalProgress.reduce((acc, progress) => acc + progress, 0) / goals.length
+  const joinChallengeGroup = async () => {
+    const currentUser = auth().currentUser
+    if (!currentUser) return
 
-          return {
-            id: doc.id,
-            name: memberData.name,
-            profileImage: memberData.profileImage,
-            goals,
-            totalProgress,
+    const groupSnapshot = await firestore().collection("challengeGroups").where("code", "==", inputCode).get()
+
+    if (groupSnapshot.empty) {
+      Alert.alert("오류", "유효하지 않은 챌린지 그룹 코드입니다.")
+      return
+    }
+
+    const groupDoc = groupSnapshot.docs[0]
+    await firestore().collection("users").doc(currentUser.uid).update({
+      challengeGroupId: groupDoc.id,
+    })
+
+    setUserChallengeGroup(groupDoc.id)
+    setChallengeCode(inputCode)
+    setGroupName(groupDoc.data().name || "")
+    setInputCode("")
+    Alert.alert("성공", "챌린지 그룹에 참여하였습니다.")
+    fetchChallengeGroup()
+  }
+
+  const leaveChallengeGroup = async () => {
+    const currentUser = auth().currentUser
+    if (!currentUser) return
+
+    Alert.alert("챌린지 그룹 나가기", "정말로 이 챌린지 그룹을 나가시겠습니까?", [
+      {
+        text: "취소",
+        style: "cancel",
+      },
+      {
+        text: "나가기",
+        onPress: async () => {
+          try {
+            await firestore().collection("users").doc(currentUser.uid).update({
+              challengeGroupId: null,
+            })
+            setUserChallengeGroup(null)
+            setChallengeCode(null)
+            setGroupName("")
+            setMembers([])
+            setGoals({})
+            setCertifications({})
+            Alert.alert("성공", "챌린지 그룹에서 나갔습니다.")
+          } catch (error) {
+            console.error("Error leaving challenge group:", error)
+            Alert.alert("오류", "챌린지 그룹을 나가는 중 오류가 발생했습니다.")
           }
-        }),
-      )
-
-      // Ensure current user is in the list
-      const currentUserDoc = await firestore().collection("users").doc(currentUser.uid).get()
-      const currentUserData = currentUserDoc.data()
-
-      if (!membersData.find((member) => member.id === currentUser.uid)) {
-        const currentUserGoals = await firestore().collection("goals").where("userId", "==", currentUser.uid).get()
-
-        const goals: Goal[] = currentUserGoals.docs.map(
-          (doc) =>
-            ({
-              id: doc.id,
-              ...doc.data(),
-            }) as Goal,
-        )
-
-        membersData.push({
-          id: currentUser.uid,
-          name: currentUserData?.nickname || "Unknown",
-          profileImage: currentUserData?.profileImageUrl || "",
-          goals,
-          totalProgress:
-            goals.reduce((acc, goal) => acc + (goal.progress / goal.weeklyGoal) * 100, 0) / Math.max(goals.length, 1),
-        })
-      }
-
-      // Sort by progress and handle ties
-      const sortedMembers = membersData.sort((a, b) => b.totalProgress - a.totalProgress)
-      setMembers(sortedMembers)
-    } catch (error) {
-      console.error("Error fetching members:", error)
-    }
+        },
+        style: "destructive",
+      },
+    ])
   }
 
-  const handleShareLink = async () => {
+  const saveChallengeHistory = useCallback(async () => {
+    if (!userChallengeGroup) return
+
+    const sortedMembers = [...members].sort((a, b) => b.totalProgress - a.totalProgress)
+    const rankedMembers = sortedMembers.map((member, index) => ({
+      userId: member.userId,
+      name: member.name,
+      profileImage: member.profileImage,
+      totalProgress: member.totalProgress,
+      rank: index + 1,
+    }))
+
+    const historyData: Omit<ChallengeHistory, "id"> = {
+      groupId: userChallengeGroup,
+      year: currentYear,
+      month: currentMonth,
+      members: rankedMembers,
+      completedAt: new Date(),
+    }
+
     try {
-      const deepLink = await createChallengeDeepLink(currentMonth)
-      Clipboard.setString(deepLink)
-      Alert.alert("성공", "챌린지 초대 링크가 복사되었습니다.")
+      await firestore().collection("challengeHistory").add(historyData)
     } catch (error) {
-      console.error("Error creating deep link:", error)
-      Alert.alert("오류", "링크 생성 중 오류가 발생했습니다.")
+      console.error("Error saving challenge history:", error)
     }
-  }
+  }, [userChallengeGroup, currentYear, currentMonth, members])
 
-  const handleJoinChallenge = async () => {
-    try {
-      const currentUser = auth().currentUser
-      if (!currentUser) return
+  // Save challenge history on the last day of the month
+  useEffect(() => {
+    const now = new Date()
+    const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
 
-      const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
-      const userData = userDoc.data()
-
-      await firestore()
-        .collection("challengeMembers")
-        .add({
-          userId: currentUser.uid,
-          name: userData?.nickname || "Unknown",
-          profileImage: userData?.profileImageUrl || "",
-          month: currentMonth,
-          year: new Date().getFullYear(),
-          joinedAt: firestore.FieldValue.serverTimestamp(),
-        })
-
-      setShowJoinModal(false)
-      fetchMembers()
-    } catch (error) {
-      console.error("Error joining challenge:", error)
-      Alert.alert("오류", "챌린지 참여 중 오류가 발생했습니다.")
+    if (
+      now.getDate() === lastDayOfMonth.getDate() &&
+      now.getMonth() === lastDayOfMonth.getMonth() &&
+      now.getFullYear() === lastDayOfMonth.getFullYear()
+    ) {
+      saveChallengeHistory()
     }
-  }
+  }, [saveChallengeHistory])
 
   const currentUser = auth().currentUser
+  const now = new Date()
+  const currentMonthNum = now.getMonth() + 1
+  const currentYearNum = now.getFullYear()
+  const isCurrentMonth = currentMonth === currentMonthNum && currentYear === currentYearNum
+  const isPastMonth = currentYear < currentYearNum || (currentYear === currentYearNum && currentMonth < currentMonthNum)
+  const isFutureMonth = (nextMonth: number) => {
+    const now = new Date()
+    const currentMonthNum = now.getMonth() + 1
+    const currentYearNum = now.getFullYear()
+
+    let targetYear = currentYear
+    if (nextMonth === 1 && currentMonth === 12) {
+      targetYear += 1
+    }
+
+    return targetYear > currentYearNum || (targetYear === currentYearNum && nextMonth > currentMonthNum)
+  }
+
+  const handleMonthChange = (newMonth: number) => {
+    const now = new Date()
+    const currentMonthNum = now.getMonth() + 1
+    const currentYearNum = now.getFullYear()
+
+    let targetYear = currentYear
+    if (newMonth === 12 && currentMonth === 1) {
+      targetYear = currentYear - 1
+    } else if (newMonth === 1 && currentMonth === 12) {
+      targetYear = currentYear + 1
+    }
+
+    if (targetYear > currentYearNum || (targetYear === currentYearNum && newMonth > currentMonthNum)) {
+      return
+    }
+
+    setCurrentMonth(newMonth)
+    setCurrentYear(targetYear)
+  }
+
+  const displayMembers = isCurrentMonth
+    ? currentMonthMembers
+    : historicalData[`${currentYear}-${currentMonth}`]?.members || []
+  const sortedMembers = isCurrentMonth
+    ? [...displayMembers]
+        .sort((a, b) => b.totalProgress - a.totalProgress)
+        .map((member, index) => ({ ...member, rank: index + 1 }))
+    : (displayMembers as (ChallengeMember & { rank: number })[])
+
+  const navigation = useNavigation<RootStackNavigationProp>()
 
   return (
     <SafeAreaView style={styles.container}>
       <ScrollView contentContainerStyle={styles.scrollContent} showsVerticalScrollIndicator={false}>
         <View style={styles.header}>
           <View style={styles.monthIndicator}>
-            <Text
-              style={[styles.monthNumber, styles.inactiveMonth]}
-              onPress={() => setCurrentMonth((prev) => Math.max(1, Math.min(12, prev - 1)))}
-            >
-              {String(currentMonth === 1 ? 12 : currentMonth - 1).padStart(2, "0")}
-            </Text>
-            <View style={styles.currentMonthContainer}>
-              <Text style={styles.activeMonth}>{String(currentMonth).padStart(2, "0")}</Text>
-              <Image source={require("../assets/challenge.svg")} style={styles.challengeIcon} />
+            <View style={styles.monthContainer}>
+              <Svg width={80} height={97} viewBox="0 0 120 146" style={[styles.challengeIcon, styles.smallIcon]}>
+                <Path
+                  fillRule="evenodd"
+                  clipRule="evenodd"
+                  d="M10 0C4.47715 0 0 4.47715 0 10V86V89C0 89.7003 0.0719915 90.3838 0.208978 91.0435C2.77044 121.82 28.5615 146 60 146C91.4385 146 117.23 121.82 119.791 91.0435C119.928 90.3838 120 89.7003 120 89V86V10C120 4.47715 115.523 0 110 0H10Z"
+                  fill="#387aff"
+                  fillOpacity={0.5}
+                />
+              </Svg>
+              <TouchableOpacity
+                onPress={() => handleMonthChange(currentMonth === 1 ? 12 : currentMonth - 1)}
+                style={styles.monthButton}
+              >
+                <Text style={[styles.monthNumber, styles.pastMonth]}>
+                  {String(currentMonth === 1 ? 12 : currentMonth - 1).padStart(2, "0")}
+                </Text>
+              </TouchableOpacity>
             </View>
-            <Text
-              style={[styles.monthNumber, styles.inactiveMonth]}
-              onPress={() => setCurrentMonth((prev) => Math.max(1, Math.min(12, prev + 1)))}
-            >
-              {String(currentMonth === 12 ? 1 : currentMonth + 1).padStart(2, "0")}
-            </Text>
+            <View style={styles.currentMonthContainer}>
+              <Svg width={120} height={146} viewBox="0 0 120 146" style={styles.challengeIcon}>
+                <Path
+                  fillRule="evenodd"
+                  clipRule="evenodd"
+                  d="M10 0C4.47715 0 0 4.47715 0 10V86V89C0 89.7003 0.0719915 90.3838 0.208978 91.0435C2.77044 121.82 28.5615 146 60 146C91.4385 146 117.23 121.82 119.791 91.0435C119.928 90.3838 120 89.7003 120 89V86V10C120 4.47715 115.523 0 110 0H10Z"
+                  fill="#387aff"
+                />
+              </Svg>
+              <Text style={[styles.monthNumber, styles.activeMonth]}>{String(currentMonth).padStart(2, "0")}</Text>
+            </View>
+            <View style={styles.monthContainer}>
+              <Svg width={80} height={97} viewBox="0 0 120 146" style={[styles.challengeIcon, styles.smallIcon]}>
+                <Path
+                  fillRule="evenodd"
+                  clipRule="evenodd"
+                  d="M10 0C4.47715 0 0 4.47715 0 10V86V89C0 89.7003 0.0719915 90.3838 0.208978 91.0435C2.77044 121.82 28.5615 146 60 146C91.4385 146 117.23 121.82 119.791 91.0435C119.928 90.3838 120 89.7003 120 89V86V10C120 4.47715 115.523 0 110 0H10Z"
+                  fill="#BEBEBE"
+                  fillOpacity={0.5}
+                />
+              </Svg>
+              <TouchableOpacity
+                onPress={() => handleMonthChange(currentMonth === 12 ? 1 : currentMonth + 1)}
+                style={styles.monthButton}
+                disabled={isFutureMonth(currentMonth === 12 ? 1 : currentMonth + 1)}
+              >
+                <Text
+                  style={[
+                    styles.monthNumber,
+                    isFutureMonth(currentMonth === 12 ? 1 : currentMonth + 1) ? styles.futureMonth : styles.pastMonth,
+                  ]}
+                >
+                  {String(currentMonth === 12 ? 1 : currentMonth + 1).padStart(2, "0")}
+                </Text>
+              </TouchableOpacity>
+            </View>
           </View>
           <Text style={styles.challengeTitle}>{currentMonth}월 챌린지</Text>
-          <Text style={styles.daysLeft}>{daysLeft}일 남음</Text>
+          {isCurrentMonth && <Text style={styles.daysLeft}>{daysLeft}일 남음</Text>}
         </View>
 
-        <View style={styles.rankingContainer}>
-          {members.map((member, index) => {
-            const rank =
-              index > 0 && member.totalProgress === members[index - 1].totalProgress
-                ? members[index - 1].rank || index
-                : index + 1
-            member.rank = rank
-
-            const isCurrentUser = currentUser && member.id === currentUser.uid
-
-            return (
-              <View key={member.id} style={[styles.rankingItem, isCurrentUser && styles.currentUserItem]}>
-                <View style={styles.rankInfo}>
-                  <Text style={[styles.rankNumber, isCurrentUser && styles.currentUserRank]}>{rank}</Text>
-                  <Image source={{ uri: member.profileImage }} style={styles.profileImage} />
-                  <Text style={styles.participantName}>{member.name}</Text>
-                </View>
-                <View style={styles.goalsContainer}>
-                  {/* <GoalIcons goals={member.goals} /> */}
-                  <Text style={[styles.progressText, isCurrentUser && styles.currentUserProgress]}>
-                    {Math.round(member.totalProgress)}%
-                  </Text>
-                </View>
+        {!userChallengeGroup ? (
+          <View style={styles.joinContainer}>
+            <View style={styles.inputButtonRow}>
+              <TextInput
+                style={[styles.input, styles.flexInput]}
+                placeholder="챌린지 그룹 이름"
+                value={inputGroupName}
+                onChangeText={setInputGroupName}
+              />
+              <TouchableOpacity style={styles.generateButton} onPress={generateChallengeCode}>
+                <Text style={styles.buttonText}>생성</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.orText}>또는</Text>
+            <View style={styles.inputButtonRow}>
+              <TextInput
+                style={[styles.input, styles.flexInput]}
+                placeholder="챌린지 그룹 코드 입력"
+                value={inputCode}
+                onChangeText={setInputCode}
+              />
+              <TouchableOpacity style={styles.joinButton} onPress={joinChallengeGroup}>
+                <Text style={styles.buttonText}>참여</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        ) : (
+          <>
+            {displayMembers.length === 0 ? (
+              <View style={styles.emptyStateContainer}>
+                <Text style={styles.emptyStateText}>
+                  {isCurrentMonth ? "아직 챌린지 참여자가 없어요" : "이 달은 챌린지가 없었어요"}
+                </Text>
               </View>
-            )
-          })}
-        </View>
+            ) : (
+              <View style={styles.rankingContainer}>
+                {sortedMembers.map((member) => {
+                  const isCurrentUser = currentUser && member.userId === currentUser.uid
+
+                  return (
+                    <TouchableOpacity
+                      key={member.userId}
+                      style={[styles.rankingItem, isCurrentUser && styles.currentUserItem]}
+                      onPress={() => {
+                        if (!isCurrentUser && !isPastMonth) {
+                          navigation.navigate("FriendProfile", { userId: member.userId })
+                        }
+                      }}
+                    >
+                      <View style={styles.rankInfo}>
+                        <Text style={[styles.rankNumber, isCurrentUser && styles.currentUserRank]}>
+                          {"rank" in member && member.rank !== undefined ? member.rank : "-"}
+                        </Text>
+                        <RNImage
+                          source={{ uri: member.profileImage }}
+                          style={styles.profileImage}
+                          onError={(e) => console.log("Error loading image:", e.nativeEvent.error)}
+                        />
+                        <Text style={styles.participantName}>{member.name}</Text>
+                      </View>
+                      <View style={styles.goalsContainer}>
+                        {!isPastMonth && <GoalIcons goals={goals[member.userId] || []} size={30} lightColor />}
+                        <Text style={[styles.progressText, isCurrentUser && styles.currentUserProgress]}>
+                          {member.totalProgress}%
+                        </Text>
+                      </View>
+                    </TouchableOpacity>
+                  )
+                })}
+              </View>
+            )}
+          </>
+        )}
       </ScrollView>
 
-      <TouchableOpacity style={styles.linkButton} onPress={handleShareLink}>
-        <Ionicons name="link-outline" size={24} color="#ffffff" />
-        <Text style={styles.linkButtonText}>챌린지 초대 링크 복사</Text>
-      </TouchableOpacity>
-
-      <JoinChallengeModal
-        isVisible={showJoinModal}
-        members={members}
-        onClose={() => setShowJoinModal(false)}
-        onJoin={handleJoinChallenge}
-      />
+      {userChallengeGroup && (isCurrentMonth || isPastMonth) && (
+        <View style={styles.bottomButtonContainer}>
+          <TouchableOpacity
+            style={styles.copyButton}
+            onPress={() => {
+              if (challengeCode) {
+                Clipboard.setString(challengeCode)
+                Alert.alert("성공", "챌린지 그룹 코드가 클립보드에 복사되었습니다.")
+              }
+            }}
+          >
+            <Text style={styles.copyButtonText}>{groupName} 코드 복사</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.leaveButton} onPress={leaveChallengeGroup}>
+            <Text style={styles.leaveButtonText}>그룹 나가기</Text>
+          </TouchableOpacity>
+        </View>
+      )}
     </SafeAreaView>
   )
 }
@@ -217,6 +529,7 @@ const styles = StyleSheet.create({
   scrollContent: {
     flexGrow: 1,
     paddingHorizontal: 20,
+    paddingBottom: 100,
   },
   header: {
     alignItems: "center",
@@ -227,39 +540,49 @@ const styles = StyleSheet.create({
     alignItems: "center",
     justifyContent: "center",
     marginBottom: 20,
-    paddingHorizontal: 20,
+  },
+  monthContainer: {
+    position: "relative",
+    alignItems: "center",
+    justifyContent: "center",
+    width: 80,
+    height: 97,
   },
   currentMonthContainer: {
     position: "relative",
     alignItems: "center",
-    marginHorizontal: 40,
+    justifyContent: "center",
+    marginHorizontal: 20,
+    width: 120,
+    height: 146,
   },
   challengeIcon: {
     position: "absolute",
-    bottom: -73,
-    left: -10,
-    width: 120,
-    height: 146,
-    resizeMode: "contain",
-    tintColor: "#387aff",
-    opacity: 0.6,
     zIndex: -1,
   },
+  smallIcon: {
+    opacity: 0.6,
+  },
+  monthButton: {
+    position: "absolute",
+    justifyContent: "center",
+    alignItems: "center",
+    width: "100%",
+    height: "100%",
+  },
   monthNumber: {
-    fontSize: 48,
+    fontSize: 36,
     fontWeight: "bold",
   },
-  inactiveMonth: {
-    color: "#dde7ff",
-    fontSize: 36,
+  pastMonth: {
+    color: "#ABC6FB",
   },
-  disabledMonth: {
-    color: "#d9d9d9",
+  futureMonth: {
+    color: "#BEBEBE",
   },
   activeMonth: {
-    color: "#387aff",
+    color: "#ffffff",
     fontSize: 48,
-    fontWeight: "bold",
   },
   challengeTitle: {
     fontSize: 24,
@@ -270,8 +593,61 @@ const styles = StyleSheet.create({
   daysLeft: {
     color: "#767676",
   },
+  joinContainer: {
+    alignItems: "center",
+    marginTop: 20,
+  },
+  generateButton: {
+    backgroundColor: "#387aff",
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  buttonText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  orText: {
+    fontSize: 16,
+    color: "#767676",
+    marginVertical: 10,
+  },
+  input: {
+    height: 40,
+    borderWidth: 1,
+    borderColor: "#dde7ff",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+  },
+  joinButton: {
+    backgroundColor: "#387aff",
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    borderRadius: 8,
+  },
+  inputButtonRow: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 10,
+  },
+  flexInput: {
+    flex: 1,
+    marginRight: 10,
+  },
+  groupInfoContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "space-between",
+    marginVertical: 20,
+  },
+  groupName: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#387aff",
+  },
   rankingContainer: {
-    paddingVertical: 20,
+    paddingVertical: 10,
   },
   rankingItem: {
     flexDirection: "row",
@@ -312,7 +688,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    gap: 8,
+    gap: 100,
     minWidth: 120,
   },
   progressText: {
@@ -325,26 +701,56 @@ const styles = StyleSheet.create({
   currentUserProgress: {
     color: "#387aff",
   },
-  linkButton: {
-    backgroundColor: "#387aff",
-    flexDirection: "row",
-    alignItems: "center",
-    justifyContent: "center",
-    padding: 15,
-    margin: 20,
-    borderRadius: 10,
-  },
-  linkButtonText: {
-    color: "#ffffff",
-    marginLeft: 10,
-    fontSize: 16,
-    fontWeight: "bold",
-  },
   rankInfo: {
     flexDirection: "row",
     alignItems: "center",
     flex: 1,
     minWidth: 0,
+  },
+  bottomButtonContainer: {
+    flexDirection: "row",
+    position: "absolute",
+    bottom: 30,
+    left: 20,
+    right: 20,
+    gap: 10,
+  },
+  copyButton: {
+    flex: 1,
+    backgroundColor: "#387aff",
+    padding: 15,
+    borderRadius: 10,
+    alignItems: "center",
+  },
+  copyButtonText: {
+    color: "#ffffff",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  leaveButton: {
+    backgroundColor: "#f8f8f8",
+    padding: 15,
+    borderRadius: 10,
+    alignItems: "center",
+    width: 120,
+    borderWidth: 1,
+    borderColor: "#387aff",
+  },
+  leaveButtonText: {
+    color: "#387aff",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  emptyStateContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    paddingVertical: 40,
+  },
+  emptyStateText: {
+    fontSize: 16,
+    color: "#767676",
+    textAlign: "center",
   },
 })
 

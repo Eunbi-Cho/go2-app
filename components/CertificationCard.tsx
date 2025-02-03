@@ -1,55 +1,76 @@
-import type React from "react"
+import { useState, useEffect } from "react"
 import { View, Text, StyleSheet, Image } from "react-native"
 import type { Goal } from "../types/goal"
 import type { Certification } from "../types/certification"
 import type { User } from "../types/user"
 import CircularProgress from "./CircularProgress"
 import { lightenColor } from "../utils/colorUtils"
+import SkeletonLoader from "./SkeletonLoader"
 
 interface CertificationCardProps {
   certification: Certification
-  goals: Goal[]
+  goal: Goal
   user: User | undefined
+  isLoading?: boolean
+  currentUser: User | null
 }
 
-const CertificationCard: React.FC<CertificationCardProps> = ({ certification, goals, user }) => {
-  const goal = goals.find((g) => g.id === certification.goalId)
+const CertificationCard: React.FC<CertificationCardProps> = ({ certification, goal, user, isLoading, currentUser }) => {
+  const [imageLoaded, setImageLoaded] = useState(false)
 
-  if (!goal) return null
+  useEffect(() => {
+    console.log("CertificationCard props:", { certification, goal, user, isLoading })
+  }, [certification, goal, user, isLoading])
 
-  const progress = (goal.progress / goal.weeklyGoal) * 100 // Calculate weekly progress
-  const lighterColor = lightenColor(goal.color, 0.6) // 60% lighter
+  const progress = (goal.progress / goal.weeklyGoal) * 100
+  const lighterColor = lightenColor(goal.color, 0.6)
 
-  const profileImageSource = user?.profileImageUrl
-    ? { uri: user.profileImageUrl }
-    : require("../assets/default-profile-image.png") // Make sure to add a default image
+  const profileImageSource =
+    user?.profileImageUrl || currentUser?.profileImageUrl
+      ? { uri: user?.profileImageUrl || currentUser?.profileImageUrl }
+      : require("../assets/default-profile-image.png")
 
   return (
     <View style={styles.card}>
       <View style={styles.imageContainer}>
-        <Image source={{ uri: certification.imageUrl }} style={styles.image} />
-        <View style={styles.overlay} />
-        <View style={styles.dateTimeContainer}>
-          <Text style={styles.dateTimeText}>
-            {certification.timestamp.toDate().toLocaleString("ko-KR", {
-              year: "numeric",
-              month: "2-digit",
-              day: "2-digit",
-              hour: "2-digit",
-              minute: "2-digit",
-              hour12: false,
-            })}
-          </Text>
-        </View>
-        <View style={styles.goalIconContainer}>
-          <CircularProgress size={50} strokeWidth={3} progress={progress} color={goal.color} />
-          <View style={[styles.iconBackground, { backgroundColor: lighterColor }]}>
-            <Text style={styles.goalIcon}>{goal.icon}</Text>
-          </View>
-        </View>
-        <View style={styles.profileImageContainer}>
-          <Image source={profileImageSource} style={styles.profileImage} />
-        </View>
+        {(isLoading || !imageLoaded) && <SkeletonLoader width="100%" height="100%" style={styles.image} />}
+        <Image
+          source={{ uri: certification.imageUrl }}
+          style={[styles.image, !imageLoaded && styles.hiddenImage]}
+          onLoad={() => {
+            console.log("Image loaded successfully:", certification.imageUrl)
+            setImageLoaded(true)
+          }}
+          onError={() => {
+            setImageLoaded(true) // Show error state instead of infinite loading
+          }}
+        />
+        {imageLoaded && (
+          <>
+            <View style={styles.overlay} />
+            <View style={styles.dateTimeContainer}>
+              <Text style={styles.dateTimeText}>
+                {certification.timestamp.toDate().toLocaleString("ko-KR", {
+                  year: "numeric",
+                  month: "2-digit",
+                  day: "2-digit",
+                  hour: "2-digit",
+                  minute: "2-digit",
+                  hour12: false,
+                })}
+              </Text>
+            </View>
+            <View style={styles.goalIconContainer}>
+              <CircularProgress size={50} strokeWidth={3} progress={progress} color={goal.color} />
+              <View style={[styles.iconBackground, { backgroundColor: lighterColor }]}>
+                <Text style={styles.goalIcon}>{goal.icon}</Text>
+              </View>
+            </View>
+            <View style={styles.profileImageContainer}>
+              <Image source={profileImageSource} style={styles.profileImage} />
+            </View>
+          </>
+        )}
       </View>
     </View>
   )
@@ -128,6 +149,9 @@ const styles = StyleSheet.create({
     width: "100%",
     height: "100%",
     resizeMode: "cover",
+  },
+  hiddenImage: {
+    opacity: 0,
   },
 })
 

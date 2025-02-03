@@ -1,4 +1,4 @@
-import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView } from "react-native"
+import { View, Text, StyleSheet, Image, TouchableOpacity, ScrollView, TextInput } from "react-native"
 import Modal from "react-native-modal"
 import type { ChallengeMember } from "../types/challenge"
 
@@ -7,9 +7,18 @@ interface JoinChallengeModalProps {
   members: ChallengeMember[]
   onClose: () => void
   onJoin: () => void
+  inputCode: string
+  setInputCode: (text: string) => void
 }
 
-export default function JoinChallengeModal({ isVisible, members, onClose, onJoin }: JoinChallengeModalProps) {
+export default function JoinChallengeModal({
+  isVisible,
+  members,
+  onClose,
+  onJoin,
+  inputCode,
+  setInputCode,
+}: JoinChallengeModalProps) {
   return (
     <Modal
       isVisible={isVisible}
@@ -20,7 +29,7 @@ export default function JoinChallengeModal({ isVisible, members, onClose, onJoin
       animationOut="slideOutDown"
     >
       <View style={styles.container}>
-        <Text style={styles.title}>챌린지 참여하기</Text>
+        <Text style={styles.title}>챌린지 참여��기</Text>
         <Text style={styles.subtitle}>현재 참여 중인 멤버</Text>
 
         <ScrollView style={styles.membersContainer}>
@@ -32,14 +41,23 @@ export default function JoinChallengeModal({ isVisible, members, onClose, onJoin
           ))}
         </ScrollView>
 
+        <View style={styles.inputContainer}>
+          <TextInput
+            style={styles.input}
+            placeholder="챌린지 그룹 코드 입력"
+            value={inputCode}
+            onChangeText={setInputCode}
+          />
+          <TouchableOpacity style={styles.joinButton} onPress={onJoin}>
+            <Text style={styles.joinButtonText}>참여하기</Text>
+          </TouchableOpacity>
+        </View>
+
         <Text style={styles.description}>이 챌린지 그룹에 참여하시겠습니까?</Text>
 
         <View style={styles.buttonContainer}>
           <TouchableOpacity style={styles.cancelButton} onPress={onClose}>
             <Text style={styles.cancelButtonText}>취소</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.joinButton} onPress={onJoin}>
-            <Text style={styles.joinButtonText}>참여하기</Text>
           </TouchableOpacity>
         </View>
       </View>
@@ -74,6 +92,20 @@ const styles = StyleSheet.create({
   membersContainer: {
     maxHeight: 200,
     marginBottom: 20,
+  },
+  inputContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    marginBottom: 20,
+  },
+  input: {
+    flex: 1,
+    height: 40,
+    borderWidth: 1,
+    borderColor: "#dde7ff",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    marginRight: 10,
   },
   memberItem: {
     flexDirection: "row",

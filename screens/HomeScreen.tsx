@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from "react"
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity } from "react-native"
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { useFocusEffect } from "@react-navigation/native"
 import firestore from "@react-native-firebase/firestore"
@@ -10,15 +10,19 @@ import CertificationCard from "../components/CertificationCard"
 import type { Goal } from "../types/goal"
 import type { Certification } from "../types/certification"
 import type { User } from "../types/user"
+import { startOfWeek } from "date-fns"
 
 export default function HomeScreen() {
   const [remainingTime, setRemainingTime] = useState<string>("")
   const [isTimeAlmostUp, setIsTimeAlmostUp] = useState<boolean>(false)
   const [showModal, setShowModal] = useState(false)
   const [goals, setGoals] = useState<Goal[]>([])
-  const [certifications, setCertifications] = useState<Certification[]>([])
-  const [todayCertifiedGoals, setTodayCertifiedGoals] = useState<string[]>([])
+  const [userCertifications, setUserCertifications] = useState<Certification[]>([])
+  const [isLoading, setIsLoading] = useState(true)
+  const [uploadingCertification, setUploadingCertification] = useState<Certification | null>(null)
   const [users, setUsers] = useState<{ [key: string]: User }>({})
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [userChallengeGroup, setUserChallengeGroup] = useState<string | null>(null)
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -30,7 +34,9 @@ export default function HomeScreen() {
       const secondsRemaining = Math.floor((timeRemaining % (1000 * 60)) / 1000)
 
       setRemainingTime(
-        `${hoursRemaining.toString().padStart(2, "0")}:${minutesRemaining.toString().padStart(2, "0")}:${secondsRemaining.toString().padStart(2, "0")}`,
+        `${hoursRemaining.toString().padStart(2, "0")}:${minutesRemaining.toString().padStart(2, "0")}:${secondsRemaining
+          .toString()
+          .padStart(2, "0")}`,
       )
       setIsTimeAlmostUp(hoursRemaining < 2)
     }, 1000)
@@ -48,43 +54,78 @@ export default function HomeScreen() {
   }, [])
 
   const fetchCertifications = useCallback(async () => {
+    const currentUser = auth().currentUser
+    if (!currentUser) {
+      console.log("No authenticated user")
+      return
+    }
+
     const today = new Date()
     today.setHours(0, 0, 0, 0)
+    const tomorrow = new Date(today)
+    tomorrow.setDate(tomorrow.getDate() + 1)
 
-    const certificationsSnapshot = await firestore()
+    console.log("Fetching certifications for date range:", today, "to", tomorrow)
+
+    // Fetch user's challenge group
+    const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
+    const userData = userDoc.data()
+    const groupId = userData?.challengeGroupId
+    setUserChallengeGroup(groupId)
+
+    // 현재 사용자 정보 로드
+    const currentUserDoc = await firestore().collection("users").doc(currentUser.uid).get()
+    if (currentUserDoc.exists) {
+      const currentUserData = { id: currentUser.uid, ...currentUserDoc.data() } as User
+      setCurrentUser(currentUserData)
+      setUsers((prevUsers) => ({ ...prevUsers, [currentUser.uid]: currentUserData }))
+    }
+
+    let certificationsQuery = firestore()
       .collection("certifications")
       .where("timestamp", ">=", today)
+      .where("timestamp", "<", tomorrow)
       .orderBy("timestamp", "desc")
-      .get()
+
+    if (groupId) {
+      console.log("User's challenge group ID:", groupId)
+      // Fetch group members
+      const membersSnapshot = await firestore().collection("users").where("challengeGroupId", "==", groupId).get()
+      const memberIds = membersSnapshot.docs.map((doc) => doc.id)
+      console.log("Group member IDs:", memberIds)
+
+      certificationsQuery = certificationsQuery.where("userId", "in", memberIds)
+
+      // Fetch users data
+      const usersData: { [key: string]: User } = {}
+      await Promise.all(
+        memberIds.map(async (userId) => {
+          const userDoc = await firestore().collection("users").doc(userId).get()
+          if (userDoc.exists) {
+            usersData[userId] = { id: userId, ...userDoc.data() } as User
+          }
+        }),
+      )
+      setUsers(usersData)
+
+      console.log("Fetched users data:", usersData)
+    } else {
+      console.log("User is not in a challenge group")
+      certificationsQuery = certificationsQuery.where("userId", "==", currentUser.uid)
+    }
+
+    const certificationsSnapshot = await certificationsQuery.get()
 
     const certificationsData = certificationsSnapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
     })) as Certification[]
 
-    setCertifications(certificationsData)
+    console.log("Fetched certifications:", certificationsData)
 
-    // Fetch users data
-    const userIds = [...new Set(certificationsData.map((cert) => cert.userId))]
-    const usersData: { [key: string]: User } = {}
-    await Promise.all(
-      userIds.map(async (userId) => {
-        const userDoc = await firestore().collection("users").doc(userId).get()
-        if (userDoc.exists) {
-          usersData[userId] = userDoc.data() as User
-        }
-      }),
-    )
-    setUsers(usersData)
+    setUserCertifications(certificationsData)
 
-    // Update today's certified goals for the current user
-    const currentUser = auth().currentUser
-    if (currentUser) {
-      const userCertifiedGoals = certificationsData
-        .filter((cert) => cert.userId === currentUser.uid)
-        .map((cert) => cert.goalId)
-      setTodayCertifiedGoals(userCertifiedGoals)
-    }
+    setIsLoading(false)
   }, [])
 
   useFocusEffect(
@@ -99,12 +140,17 @@ export default function HomeScreen() {
   }
 
   const uploadImage = async (uri: string): Promise<string> => {
-    const response = await fetch(uri)
-    const blob = await response.blob()
-    const filename = `certification_${Date.now()}.jpg`
-    const ref = storage().ref().child(`certification_images/${filename}`)
-    await ref.put(blob)
-    return await ref.getDownloadURL()
+    try {
+      const response = await fetch(uri)
+      const blob = await response.blob()
+      const filename = `certification_${Date.now()}.jpg`
+      const ref = storage().ref().child(`certification_images/${filename}`)
+      await ref.put(blob)
+      return await ref.getDownloadURL()
+    } catch (error) {
+      console.error("Error in uploadImage:", error)
+      throw new Error("이미지 업로드 중 오류가 발생했습니다.")
+    }
   }
 
   const handleImageUpload = async (goalId: string, imageUri: string) => {
@@ -113,10 +159,26 @@ export default function HomeScreen() {
 
     try {
       const timestamp = firestore.Timestamp.now()
+
+      // Create a temporary certification object for the skeleton loader
+      const tempCertification: Certification = {
+        id: "temp_" + Date.now(),
+        userId: currentUser.uid,
+        goalId: goalId,
+        imageUrl: "",
+        timestamp: timestamp,
+        goalProgress: 0,
+        goalWeeklyGoal: 0,
+      }
+      setUploadingCertification(tempCertification)
+      setUserCertifications((prev) => [tempCertification, ...prev])
+
       const imageUrl = await uploadImage(imageUri)
 
       const selectedGoal = goals.find((goal) => goal.id === goalId)
-      if (!selectedGoal) return
+      if (!selectedGoal) {
+        throw new Error("Selected goal not found")
+      }
 
       const newProgress = selectedGoal.progress + 1
       const progressPercentage = (newProgress / selectedGoal.weeklyGoal) * 100
@@ -133,27 +195,83 @@ export default function HomeScreen() {
       const docRef = await firestore().collection("certifications").add(newCertification)
       const addedCertification: Certification = { id: docRef.id, ...newCertification }
 
-      setCertifications((prev) => [addedCertification, ...prev])
-      setTodayCertifiedGoals((prev) => [...prev, goalId])
+      setUserCertifications((prev) => [addedCertification, ...prev.filter((cert) => cert.id !== tempCertification.id)])
+      setUploadingCertification(null)
 
       // Update goal progress and days
       const goalRef = firestore().collection("goals").doc(goalId)
       await firestore().runTransaction(async (transaction) => {
         const goalDoc = await transaction.get(goalRef)
-        if (!goalDoc.exists) return
+        if (!goalDoc.exists) {
+          throw new Error("Goal document not found")
+        }
 
         const goalData = goalDoc.data() as Goal
-        const newProgress = Math.min(goalData.progress + 1, goalData.weeklyGoal)
-        const dayOfWeek = timestamp.toDate().getDay()
-        const newDays = [...goalData.days]
-        newDays[dayOfWeek === 0 ? 6 : dayOfWeek - 1] = true // Adjust for Sunday being 0
-        transaction.update(goalRef, { progress: newProgress, days: newDays })
+        const currentDate = new Date()
+        const currentWeekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
+
+        let newProgress = goalData.progress
+        let newDays = [...goalData.days]
+
+        // Reset progress if it's a new week
+        if (!goalData.lastResetDate || new Date(goalData.lastResetDate) < currentWeekStart) {
+          newProgress = 1
+          newDays = Array(7).fill(false)
+        } else {
+          newProgress = Math.min(goalData.progress + 1, goalData.weeklyGoal)
+        }
+
+        const dayOfWeek = currentDate.getDay()
+        newDays[dayOfWeek === 0 ? 6 : dayOfWeek - 1] = true
+
+        transaction.update(goalRef, {
+          progress: newProgress,
+          days: newDays,
+          lastResetDate: currentDate,
+        })
       })
 
       await fetchGoals()
+      await fetchCertifications()
     } catch (error) {
       console.error("Error uploading image:", error)
+      // Remove the temporary certification if upload fails
+      setUserCertifications((prev) => prev.filter((cert) => cert.id !== "temp_" + Date.now()))
+      setUploadingCertification(null)
+
+      // Show error message to user
+      Alert.alert("업로드 실패", "이미지 업로드 중 오류가 발생했습니다. 다시 시도해 주세요.", [
+        { text: "확인", onPress: () => console.log("OK Pressed") },
+      ])
     }
+  }
+
+  const renderCertifications = (certifications: Certification[]) => {
+    console.log(`Rendering certifications:`, certifications)
+    return (
+      <>
+        {certifications.length > 0 ? (
+          certifications.map((cert) => {
+            console.log(`Rendering certification:`, cert)
+            const certGoal =
+              goals.find((g) => g.id === cert.goalId) ||
+              ({ id: cert.goalId, icon: "🎯", color: "#387aff", name: "Group Goal" } as Goal)
+            return (
+              <CertificationCard
+                key={cert.id}
+                certification={cert}
+                goal={certGoal}
+                user={users[cert.userId] || currentUser}
+                isLoading={cert.id === uploadingCertification?.id}
+                currentUser={currentUser}
+              />
+            )
+          })
+        ) : (
+          <Text style={styles.noCertificationsText}>인증된 목표가 없습니다.</Text>
+        )}
+      </>
+    )
   }
 
   return (
@@ -163,9 +281,7 @@ export default function HomeScreen() {
         <Text style={styles.headerText}>오늘의 목표 달성을 인증하세요</Text>
 
         <View style={styles.certificationContainer}>
-          {certifications.map((cert) => (
-            <CertificationCard key={cert.id} certification={cert} goals={goals} user={users[cert.userId]} />
-          ))}
+          {isLoading ? <ActivityIndicator size="large" color="#387aff" /> : renderCertifications(userCertifications)}
         </View>
       </ScrollView>
 
@@ -175,7 +291,7 @@ export default function HomeScreen() {
 
       <GoalAndImageSelectionModal
         isVisible={showModal}
-        goals={goals.filter((goal) => !todayCertifiedGoals.includes(goal.id))}
+        goals={goals.filter((goal) => !userCertifications.map((cert) => cert.goalId).includes(goal.id))}
         onClose={() => setShowModal(false)}
         onImageSelected={(goalId: string, imageUri: string) => {
           setShowModal(false)
@@ -231,6 +347,20 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 16,
     fontWeight: "bold",
+  },
+  sectionTitle: {
+    fontSize: 18,
+    fontWeight: "bold",
+    color: "#000000",
+    marginTop: 20,
+    marginBottom: 10,
+  },
+  noCertificationsText: {
+    textAlign: "center",
+    fontSize: 16,
+    color: "#767676",
+    marginTop: 10,
+    marginBottom: 20,
   },
 })
 

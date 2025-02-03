@@ -7,11 +7,13 @@ export type UserProfile = {
 }
 
 export type RootStackParamList = {
+  Login: undefined
   MainTabs: undefined
   GoalCreation: { userProfile: UserProfile; goal?: Goal }
-  Profile: { userProfile: UserProfile }
+  Profile: { userProfile: UserProfile; handleLogout: () => void }
   Home: undefined
   Challenge: undefined
+  FriendProfile: { userId: string }
 }
 
 export type RootStackNavigationProp = NativeStackNavigationProp<RootStackParamList>
