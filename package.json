@@ -14,6 +14,7 @@
     "@react-native-firebase/app": "^21.7.1",
     "@react-native-firebase/auth": "^21.7.1",
     "@react-native-firebase/firestore": "^21.7.1",
+    "@react-native-firebase/messaging": "^21.7.1",
     "@react-native-firebase/storage": "^21.7.1",
     "@react-native-kakao/core": "^2.2.6",
     "@react-native-kakao/user": "^2.2.6",

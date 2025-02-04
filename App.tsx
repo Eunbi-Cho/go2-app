@@ -13,6 +13,7 @@ import { View, ActivityIndicator, Text, StyleSheet } from "react-native"
 import type React from "react"
 import auth from "@react-native-firebase/auth"
 import firestore from "@react-native-firebase/firestore"
+import messaging from "@react-native-firebase/messaging"
 
 import LoginScreen from "./screens/LoginScreen"
 import HomeScreen from "./screens/HomeScreen"
@@ -99,6 +100,32 @@ export default function App() {
     }
   }, [])
 
+  const requestUserPermission = async () => {
+    const authStatus = await messaging().requestPermission()
+    const enabled =
+      authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
+      authStatus === messaging.AuthorizationStatus.PROVISIONAL
+
+    if (enabled) {
+      console.log("Authorization status:", authStatus)
+    }
+  }
+
+  const getFCMToken = useCallback(async () => {
+    try {
+      const token = await messaging().getToken()
+      console.log("FCM Token:", token)
+      const currentUser = auth().currentUser
+      if (currentUser) {
+        await firestore().collection("users").doc(currentUser.uid).update({
+          fcmToken: token,
+        })
+      }
+    } catch (error) {
+      console.error("Error getting FCM token:", error)
+    }
+  }, [])
+
   useEffect(() => {
     const initializeApp = async () => {
       try {
@@ -111,6 +138,8 @@ export default function App() {
 
         await initializeKakaoSDK(EXPO_KAKAO_APP_KEY)
         console.log("Kakao SDK initialized successfully")
+
+        await requestUserPermission()
 
         await loadFonts()
         console.log("Fonts loaded successfully")
@@ -144,6 +173,7 @@ export default function App() {
           console.error("Error fetching user profile:", error)
           setUserProfile(null)
         } finally {
+          await getFCMToken()
           setInitializing(false)
         }
       } else {
@@ -155,7 +185,22 @@ export default function App() {
     })
 
     return () => unsubscribe()
-  }, [loadFonts, checkUserGoals])
+  }, [loadFonts, checkUserGoals, getFCMToken])
+
+  useEffect(() => {
+    const unsubscribe = messaging().onMessage(async (remoteMessage) => {
+      console.log("Foreground Message received:", remoteMessage)
+      // 여기에서 알림을 표시하는 로직을 구현할 수 있습니다.
+      // 예: react-native-toast-message 라이브러리를 사용하여 토스트 메시지 표시
+    })
+
+    return unsubscribe
+  }, [])
+
+  messaging().setBackgroundMessageHandler(async (remoteMessage) => {
+    console.log("Background Message received:", remoteMessage)
+    // 여기에서 백그라운드 알림 처리 로직을 구현할 수 있습니다.
+  })
 
   const handleLoginSuccess = async (profile: UserProfile) => {
     setIsLoggedIn(true)
