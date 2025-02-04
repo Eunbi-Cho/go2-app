@@ -1,6 +1,6 @@
 import { EXPO_KAKAO_APP_KEY } from "@env"
 import "react-native-gesture-handler"
-import { useEffect, useState, useRef } from "react"
+import { useEffect, useState, useRef, useCallback } from "react"
 import { NavigationContainer, type NavigationContainerRef } from "@react-navigation/native"
 import { createBottomTabNavigator } from "@react-navigation/bottom-tabs"
 import { createNativeStackNavigator } from "@react-navigation/native-stack"
@@ -8,9 +8,11 @@ import { Ionicons } from "@expo/vector-icons"
 import { SafeAreaProvider } from "react-native-safe-area-context"
 import { initializeKakaoSDK } from "@react-native-kakao/core"
 import * as Font from "expo-font"
-import type { RootStackParamList, UserProfile } from "./types/navigation"
-import { View, ActivityIndicator } from "react-native"
+import type { RootStackParamList, MainTabsParamList, UserProfile } from "./types/navigation"
+import { View, ActivityIndicator, Text, StyleSheet } from "react-native"
 import type React from "react"
+import auth from "@react-native-firebase/auth"
+import firestore from "@react-native-firebase/firestore"
 
 import LoginScreen from "./screens/LoginScreen"
 import HomeScreen from "./screens/HomeScreen"
@@ -19,7 +21,7 @@ import ProfileScreen from "./screens/ProfileScreen"
 import GoalCreationScreen from "./screens/GoalCreationScreen"
 import FriendProfileScreen from "./screens/FriendProfileScreen"
 
-const Tab = createBottomTabNavigator()
+const Tab = createBottomTabNavigator<MainTabsParamList>()
 const Stack = createNativeStackNavigator<RootStackParamList>()
 
 type MainTabsProps = {
@@ -27,9 +29,10 @@ type MainTabsProps = {
   handleLogout: () => void
 }
 
-const MainTabs = ({ userProfile, handleLogout }: MainTabsProps) => {
+const MainTabs: React.FC<MainTabsProps> = ({ userProfile, handleLogout }) => {
   return (
     <Tab.Navigator
+      initialRouteName="Home"
       screenOptions={({ route }) => ({
         tabBarIcon: ({ focused, color, size }) => {
           let iconName: keyof typeof Ionicons.glyphMap = "home"
@@ -62,11 +65,9 @@ const MainTabs = ({ userProfile, handleLogout }: MainTabsProps) => {
     >
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Challenge" component={ChallengeScreen} />
-      <Tab.Screen
-        name="Profile"
-        component={ProfileScreen as React.ComponentType<any>}
-        initialParams={{ userProfile, handleLogout }}
-      />
+      <Tab.Screen name="Profile">
+        {(props) => <ProfileScreen {...props} userProfile={userProfile} handleLogout={handleLogout} />}
+      </Tab.Screen>
     </Tab.Navigator>
   )
 }
@@ -76,13 +77,33 @@ export default function App() {
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
   const [fontsLoaded, setFontsLoaded] = useState(false)
   const [isInitialized, setIsInitialized] = useState(false)
+  const [initializing, setInitializing] = useState(true)
+  const [hasGoals, setHasGoals] = useState(false)
   const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null)
+
+  const loadFonts = useCallback(async () => {
+    await Font.loadAsync({
+      ...Ionicons.font,
+      MungyeongGamhongApple: require("./assets/fonts/Mungyeong-Gamhong-Apple.otf"),
+    })
+    setFontsLoaded(true)
+  }, [])
+
+  const checkUserGoals = useCallback(async (userId: string) => {
+    try {
+      const goalsSnapshot = await firestore().collection("goals").where("userId", "==", userId).limit(1).get()
+      return !goalsSnapshot.empty
+    } catch (error) {
+      console.error("Error checking user goals:", error)
+      return false
+    }
+  }, [])
 
   useEffect(() => {
     const initializeApp = async () => {
       try {
         console.log("Starting app initialization...")
-        console.log("KAKAO_APP_KEY:", EXPO_KAKAO_APP_KEY) // Remove in production
+        console.log("KAKAO_APP_KEY:", EXPO_KAKAO_APP_KEY)
 
         if (!EXPO_KAKAO_APP_KEY) {
           throw new Error("Kakao App Key is not defined")
@@ -101,30 +122,68 @@ export default function App() {
     }
 
     initializeApp()
-  }, [])
 
-  const loadFonts = async () => {
-    await Font.loadAsync({
-      ...Ionicons.font,
+    const unsubscribe = auth().onAuthStateChanged(async (user) => {
+      if (user) {
+        setIsLoggedIn(true)
+        try {
+          const userDoc = await firestore().collection("users").doc(user.uid).get()
+          if (userDoc.exists) {
+            const userData = userDoc.data()
+            setUserProfile({
+              nickname: userData?.nickname || "Unknown",
+              profileImageUrl: userData?.profileImageUrl || "",
+            })
+            const userHasGoals = await checkUserGoals(user.uid)
+            setHasGoals(userHasGoals)
+          } else {
+            console.error("User document does not exist in Firestore")
+            setUserProfile(null)
+          }
+        } catch (error) {
+          console.error("Error fetching user profile:", error)
+          setUserProfile(null)
+        } finally {
+          setInitializing(false)
+        }
+      } else {
+        setIsLoggedIn(false)
+        setUserProfile(null)
+        setHasGoals(false)
+        setInitializing(false)
+      }
     })
-    setFontsLoaded(true)
-  }
 
-  const handleLoginSuccess = (profile: UserProfile) => {
+    return () => unsubscribe()
+  }, [loadFonts, checkUserGoals])
+
+  const handleLoginSuccess = async (profile: UserProfile) => {
     setIsLoggedIn(true)
     setUserProfile(profile)
+    const currentUser = auth().currentUser
+    if (currentUser) {
+      const userHasGoals = await checkUserGoals(currentUser.uid)
+      setHasGoals(userHasGoals)
+      if (!userHasGoals) {
+        navigationRef.current?.navigate("GoalCreation", { userProfile: profile, isInitialGoal: true })
+      } else {
+        navigationRef.current?.navigate("MainTabs", { userProfile: profile, handleLogout })
+      }
+    }
     console.log("App userProfile set:", profile)
   }
 
   const handleLogout = () => {
     setIsLoggedIn(false)
     setUserProfile(null)
+    setHasGoals(false)
   }
 
-  if (!fontsLoaded || !isInitialized) {
+  if (!fontsLoaded || !isInitialized || initializing) {
     return (
-      <View style={{ flex: 1, justifyContent: "center", alignItems: "center" }}>
+      <View style={styles.loadingContainer}>
         <ActivityIndicator size="large" color="#387aff" />
+        <Text style={styles.loadingText}>앱을 초기화하는 중...</Text>
       </View>
     )
   }
@@ -145,7 +204,7 @@ export default function App() {
               <Stack.Screen
                 name="GoalCreation"
                 component={GoalCreationScreen}
-                initialParams={{ userProfile: userProfile! }}
+                initialParams={{ userProfile: userProfile!, isInitialGoal: !hasGoals }}
               />
               <Stack.Screen name="FriendProfile" component={FriendProfileScreen} />
             </>
@@ -155,4 +214,19 @@ export default function App() {
     </SafeAreaProvider>
   )
 }
+
+const styles = StyleSheet.create({
+  loadingContainer: {
+    flex: 1,
+    justifyContent: "center",
+    alignItems: "center",
+    backgroundColor: "#f8f8f8",
+  },
+  loadingText: {
+    marginTop: 20,
+    fontSize: 16,
+    color: "#767676",
+    fontFamily: "MungyeongGamhongApple",
+  },
+})
 

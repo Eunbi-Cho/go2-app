@@ -67,32 +67,35 @@ const GoalAndImageSelectionModal: React.FC<GoalAndImageSelectionModalProps> = ({
     >
       <View style={styles.container}>
         <Text style={styles.title}>어떤 목표를 인증하나요?</Text>
-        {isEmpty && <Text style={styles.congratsMessage}>대단해요, 오늘 모든 목표를 인증했어요!</Text>}
-        <FlatList
-          data={goals}
-          keyExtractor={(item) => item.id}
-          renderItem={({ item }) => (
-            <TouchableOpacity
-              style={[styles.goalItem, selectedGoal?.id === item.id && styles.selectedGoalItem]}
-              onPress={() => handleGoalSelect(item)}
-            >
-              <Text style={styles.goalIcon}>{item.icon}</Text>
-              <Text style={styles.goalName}>{item.name}</Text>
-            </TouchableOpacity>
-          )}
-        />
+        {isEmpty ? (
+          <Text style={styles.emptyMessage}>목표를 추가하고 매일 인증하는 습관을 만들어보세요</Text>
+        ) : (
+          <FlatList
+            data={goals}
+            keyExtractor={(item) => item.id}
+            renderItem={({ item }) => (
+              <TouchableOpacity
+                style={[styles.goalItem, selectedGoal?.id === item.id && styles.selectedGoalItem]}
+                onPress={() => handleGoalSelect(item)}
+              >
+                <Text style={styles.goalIcon}>{item.icon}</Text>
+                <Text style={styles.goalName}>{item.name}</Text>
+              </TouchableOpacity>
+            )}
+          />
+        )}
         <View style={styles.buttonContainer}>
           <TouchableOpacity
-            style={[styles.button, (!selectedGoal || isEmpty) && styles.disabledButton]}
+            style={[styles.button, isEmpty && styles.disabledButton]}
             onPress={handleImagePick}
-            disabled={!selectedGoal || isEmpty}
+            disabled={isEmpty}
           >
             <Text style={styles.buttonText}>갤러리에서 선택</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.button, (!selectedGoal || isEmpty) && styles.disabledButton]}
+            style={[styles.button, isEmpty && styles.disabledButton]}
             onPress={handleCameraLaunch}
-            disabled={!selectedGoal || isEmpty}
+            disabled={isEmpty}
           >
             <Text style={styles.buttonText}>지금 촬영</Text>
           </TouchableOpacity>
@@ -162,11 +165,10 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: "bold",
   },
-  congratsMessage: {
+  emptyMessage: {
     fontSize: 16,
-    fontWeight: "medium",
     textAlign: "center",
-    color: "#535353",
+    color: "#767676",
     marginVertical: 20,
   },
 })

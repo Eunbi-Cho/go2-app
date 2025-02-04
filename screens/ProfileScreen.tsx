@@ -15,7 +15,9 @@ import {
   Modal,
 } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
-import type { NativeStackScreenProps } from "@react-navigation/native-stack"
+import type { RouteProp } from "@react-navigation/native"
+import type { MainTabsNavigationProp } from "../types/navigation"
+import type { MainTabsParamList } from "../types/navigation"
 import { useFocusEffect } from "@react-navigation/native"
 import firestore from "@react-native-firebase/firestore"
 import auth from "@react-native-firebase/auth"
@@ -23,18 +25,17 @@ import * as KakaoUser from "@react-native-kakao/user"
 import { Ionicons } from "@expo/vector-icons"
 import type { Goal } from "../types/goal"
 import CircularProgress from "../components/CircularProgress"
-import type { RootStackParamList, UserProfile } from "../types/navigation"
+import type { UserProfile } from "../types/navigation"
 import { startOfWeek } from "date-fns"
 
-type ProfileParams = {
+type ProfileScreenProps = {
+  navigation: MainTabsNavigationProp
+  route: RouteProp<MainTabsParamList, "Profile">
   userProfile: UserProfile
   handleLogout: () => void
 }
 
-type ProfileScreenProps = NativeStackScreenProps<RootStackParamList, "Profile">
-
-const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
-  const { userProfile, handleLogout } = route.params as ProfileParams
+const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation, route, userProfile, handleLogout }) => {
   const [goals, setGoals] = useState<Goal[]>([])
   const MAX_GOALS = 4
   const [isLoading, setIsLoading] = useState(true)
@@ -55,13 +56,12 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
         style: "destructive",
         onPress: async () => {
           try {
-            handleLogout()
             await KakaoUser.logout()
             await auth().signOut()
+            handleLogout() // This should be provided by the parent component
           } catch (error) {
             console.error("로그아웃 중 오류 발생:", error)
-            // 에러가 발생하더라도 앱의 로그아웃은 진행
-            handleLogout()
+            Alert.alert("오류", "로그아웃 중 문제가 발생했습니다. 다시 시도해 주세요.")
           }
         },
       },
@@ -179,7 +179,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
   }, [fetchGoals])
 
   const handleEditGoal = (goal: Goal) => {
-    navigation.navigate("GoalCreation", { userProfile, goal })
+    navigation.navigate("GoalCreation", { userProfile, goal, isInitialGoal: false })
   }
 
   const handleDeleteGoal = (goal: Goal) => {
@@ -224,6 +224,15 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
       setSelectedGoal(goal)
       setShowAndroidModal(true)
     }
+  }
+
+  if (!userProfile) {
+    return (
+      <View style={styles.container}>
+        <ActivityIndicator size="large" color="#387aff" />
+        <Text style={styles.loadingText}>프로필 정보를 불러오는 중...</Text>
+      </View>
+    )
   }
 
   if (isLoading) {
@@ -311,7 +320,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ route, navigation }) => {
 
       <TouchableOpacity
         style={[styles.addButton, goals.length >= MAX_GOALS && styles.disabledButton]}
-        onPress={() => navigation.navigate("GoalCreation", { userProfile })}
+        onPress={() => navigation.navigate("GoalCreation", { userProfile, isInitialGoal: false, goal: undefined })}
         disabled={goals.length >= MAX_GOALS}
       >
         <Text style={styles.addButtonText}>
@@ -379,11 +388,11 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   name: {
-    fontSize: 24,
-    fontWeight: "bold",
+    fontSize: 20,
     marginBottom: 30,
     color: "#000000",
     textAlign: "center",
+    fontFamily: "MungyeongGamhongApple",
   },
   sectionTitle: {
     fontSize: 16,
@@ -549,6 +558,11 @@ const styles = StyleSheet.create({
   },
   disabledButton: {
     backgroundColor: "#a7a7a7",
+  },
+  loadingText: {
+    marginTop: 20,
+    fontSize: 16,
+    color: "#767676",
   },
 })
 

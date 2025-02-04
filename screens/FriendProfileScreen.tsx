@@ -231,11 +231,11 @@ const styles = StyleSheet.create({
     marginBottom: 20,
   },
   name: {
-    fontSize: 24,
-    fontWeight: "bold",
+    fontSize: 20,
     marginBottom: 30,
     color: "#000000",
     textAlign: "center",
+    fontFamily: "MungyeongGamhongApple",
   },
   sectionTitle: {
     fontSize: 16,

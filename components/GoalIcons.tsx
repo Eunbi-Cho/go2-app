@@ -22,7 +22,7 @@ const GoalIcons: React.FC<GoalIconsProps> = ({ goals, size = 24, lightColor = fa
             style={[
               styles.iconWrapper,
               {
-                left: index * (size * 0.7),
+                right: index * (size * 0.7),
                 width: size,
                 height: size,
                 zIndex: goals.length - index,
@@ -51,11 +51,13 @@ const GoalIcons: React.FC<GoalIconsProps> = ({ goals, size = 24, lightColor = fa
 
 const styles = StyleSheet.create({
   container: {
-    flexDirection: "row",
+    flexDirection: "row-reverse",
     alignItems: "center",
+    justifyContent: "flex-start",
+    gap: 8,
   },
   iconWrapper: {
-    position: "absolute",
+    position: "relative",
     justifyContent: "center",
     alignItems: "center",
   },

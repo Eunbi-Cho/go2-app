@@ -1,4 +1,6 @@
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
+import type { BottomTabNavigationProp } from "@react-navigation/bottom-tabs"
+import type { CompositeNavigationProp } from "@react-navigation/native"
 import type { Goal } from "./goal"
 
 export type UserProfile = {
@@ -6,15 +8,23 @@ export type UserProfile = {
   profileImageUrl: string
 }
 
-export type RootStackParamList = {
-  Login: undefined
-  MainTabs: undefined
-  GoalCreation: { userProfile: UserProfile; goal?: Goal }
-  Profile: { userProfile: UserProfile; handleLogout: () => void }
+export type MainTabsParamList = {
   Home: undefined
   Challenge: undefined
+  Profile: undefined
+}
+
+export type RootStackParamList = {
+  Login: undefined
+  MainTabs: { userProfile: UserProfile; handleLogout: () => void }
+  GoalCreation: { userProfile: UserProfile; goal?: Goal; isInitialGoal: boolean }
   FriendProfile: { userId: string }
 }
 
 export type RootStackNavigationProp = NativeStackNavigationProp<RootStackParamList>
+
+export type MainTabsNavigationProp = CompositeNavigationProp<
+  BottomTabNavigationProp<MainTabsParamList>,
+  NativeStackNavigationProp<RootStackParamList>
+>
 

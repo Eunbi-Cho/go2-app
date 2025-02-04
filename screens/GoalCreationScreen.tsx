@@ -9,13 +9,14 @@ import type { Goal } from "../types/goal"
 import EmojiKeyboard from "../components/EmojiKeyboard"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../types/navigation"
+import { CommonActions } from "@react-navigation/native"
 
 type GoalCreationScreenProps = NativeStackScreenProps<RootStackParamList, "GoalCreation">
 
 const COLORS = ["#f4583f", "#ffa8b0", "#ffa14a", "#fece51", "#48b86e", "#80daff", "#387aff"]
 
 export const GoalCreationScreen: React.FC<GoalCreationScreenProps> = ({ navigation, route }) => {
-  const { userProfile, goal } = route.params
+  const { userProfile, goal, isInitialGoal } = route.params
   const [icon, setIcon] = useState(goal?.icon || "")
   const [selectedColor, setSelectedColor] = useState(goal?.color || COLORS[0])
   const [name, setName] = useState(goal?.name || "")
@@ -45,11 +46,11 @@ export const GoalCreationScreen: React.FC<GoalCreationScreenProps> = ({ navigati
         weeklyGoal,
         userId: currentUser.uid,
         lastResetDate: new Date(),
-        weeklyProgressHistory: [], // 새로운 필드 추가
+        weeklyProgressHistory: [],
       }
 
       if (isEditMode) {
-        await firestore().collection("goals").doc(goal.id).update(goalData)
+        await firestore().collection("goals").doc(goal!.id).update(goalData)
         console.log("Goal updated successfully:", goalData)
       } else {
         await firestore()
@@ -59,12 +60,22 @@ export const GoalCreationScreen: React.FC<GoalCreationScreenProps> = ({ navigati
             progress: 0,
             days: Array(7).fill(false),
             createdAt: firestore.FieldValue.serverTimestamp(),
-            weeklyProgressHistory: [], // 새로운 필드 추가
+            weeklyProgressHistory: [],
           })
         console.log("New goal added successfully:", goalData)
       }
 
-      navigation.goBack()
+      navigation.dispatch(
+        CommonActions.reset({
+          index: 0,
+          routes: [
+            {
+              name: "MainTabs",
+              params: { screen: "Profile" },
+            },
+          ],
+        }),
+      )
     } catch (error) {
       console.error("Error saving goal:", error)
       Alert.alert("오류", "목표를 저장하는 중 오류가 발생했습니다.")
@@ -78,9 +89,11 @@ export const GoalCreationScreen: React.FC<GoalCreationScreenProps> = ({ navigati
 
   return (
     <SafeAreaView style={styles.container}>
-      <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
-        <Ionicons name="arrow-back" size={24} color="#000000" />
-      </TouchableOpacity>
+      {!isInitialGoal && (
+        <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+          <Ionicons name="arrow-back" size={24} color="#000000" />
+        </TouchableOpacity>
+      )}
 
       <Text style={styles.title}>
         나, {userProfile.nickname}의{"\n"}
@@ -174,11 +187,12 @@ const styles = StyleSheet.create({
   },
   title: {
     fontSize: 24,
-    color: "#000000",
+    color: "#A5A5A5",
     marginTop: 40,
     marginBottom: 40,
     textAlign: "center",
     lineHeight: 36,
+    fontFamily: "MungyeongGamhongApple",
   },
   iconInput: {
     width: 80,

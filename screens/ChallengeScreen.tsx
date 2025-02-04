@@ -576,22 +576,31 @@ const styles = StyleSheet.create({
   },
   pastMonth: {
     color: "#ABC6FB",
+    fontSize: 30,
+    fontFamily: "MungyeongGamhongApple",
   },
   futureMonth: {
     color: "#BEBEBE",
+    fontSize: 30,
+    fontFamily: "MungyeongGamhongApple",
   },
   activeMonth: {
     color: "#ffffff",
-    fontSize: 48,
+    fontSize: 40,
+    fontFamily: "MungyeongGamhongApple",
   },
   challengeTitle: {
     fontSize: 24,
     fontWeight: "bold",
     marginBottom: 5,
     color: "#000000",
+    fontFamily: "MungyeongGamhongApple",
   },
   daysLeft: {
     color: "#767676",
+    fontSize: 16,
+    fontWeight: "medium",
+    marginTop: 6,
   },
   joinContainer: {
     alignItems: "center",
@@ -688,8 +697,7 @@ const styles = StyleSheet.create({
     flexDirection: "row",
     alignItems: "center",
     justifyContent: "flex-end",
-    gap: 100,
-    minWidth: 120,
+    maxWidth: 160,
   },
   progressText: {
     fontSize: 16,
@@ -697,6 +705,7 @@ const styles = StyleSheet.create({
     color: "#387aff",
     minWidth: 45,
     textAlign: "right",
+    marginLeft: 10,
   },
   currentUserProgress: {
     color: "#387aff",

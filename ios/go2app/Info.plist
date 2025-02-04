@@ -2,6 +2,10 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
+	<key>UIAppFonts</key>
+	<array>
+		<string>Mungyeong-Gamhong-Apple.otf</string>
+	</array>
 	<key>CADisableMinimumFrameDurationOnPhone</key>
 	<true/>
 	<key>CFBundleDevelopmentRegion</key>
@@ -27,24 +31,10 @@
 		<dict>
 			<key>CFBundleURLSchemes</key>
 			<array>
-				<string>com.go2go2</string>
+				<string>kakao${KAKAO_APP_KEY}</string>
+				<string>go2go2</string>
 			</array>
 		</dict>
-		<dict>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>exp+go2-app</string>
-			</array>
-		</dict>
-		<dict>
-			<key>CFBundleURLName</key>
-			<string>Kakao</string>
-			<key>CFBundleURLSchemes</key>
-			<array>
-				<string>kakao{{native app key}}</string>
-			</array>
-		</dict>
-		<dict/>
 	</array>
 	<key>CFBundleVersion</key>
 	<string>1</string>
@@ -52,7 +42,6 @@
 	<array>
 		<string>kakaokompassauth</string>
 		<string>kakaolink</string>
-		<string>kakaoplus</string>
 	</array>
 	<key>LSMinimumSystemVersion</key>
 	<string>12.0</string>
@@ -97,20 +86,5 @@
 	<string>Light</string>
 	<key>UIViewControllerBasedStatusBarAppearance</key>
 	<false/>
-	<key>CFBundleURLTypes</key>
-	<array>
-	<dict>
-		<key>CFBundleURLSchemes</key>
-		<array>
-		<string>kakao${KAKAO_APP_KEY}</string>
-		<string>go2go2</string>
-		</array>
-	</dict>
-	</array>
-	<key>LSApplicationQueriesSchemes</key>
-	<array>
-	<string>kakaokompassauth</string>
-	<string>kakaolink</string>
-	</array>
 </dict>
 </plist>

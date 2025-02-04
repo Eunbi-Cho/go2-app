@@ -52,9 +52,10 @@ export default function HomeScreen() {
 
     const goalsData = goalsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Goal)
     setGoals(goalsData)
+    return goalsData
   }, [])
 
-  const fetchCertifications = useCallback(async () => {
+  const fetchCertifications = useCallback(async (userGoals: Goal[] = []) => {
     const currentUser = auth().currentUser
     if (!currentUser) {
       console.log("No authenticated user")
@@ -124,9 +125,17 @@ export default function HomeScreen() {
       ...doc.data(),
     })) as Certification[]
 
-    console.log("Fetched certifications:", certificationsData)
+    // 현재 사용자의 인증샷 중 삭제된 목표의 인증샷을 필터링합니다.
+    const filteredCertifications = certificationsData.filter((cert) => {
+      if (cert.userId === currentUser.uid) {
+        // 현재 사용자의 인증샷인 경우, 해당 목표가 존재하는지 확인
+        return userGoals.some((goal) => goal.id === cert.goalId)
+      }
+      // 다른 사용자의 인증샷은 모두 표시
+      return true
+    })
 
-    setUserCertifications(certificationsData)
+    setUserCertifications(filteredCertifications)
 
     // Fetch group members' goals
     const groupGoals: { [userId: string]: Goal[] } = {}
@@ -145,8 +154,11 @@ export default function HomeScreen() {
 
   useFocusEffect(
     useCallback(() => {
-      fetchGoals()
-      fetchCertifications()
+      const fetchData = async () => {
+        const userGoals = await fetchGoals()
+        await fetchCertifications(userGoals)
+      }
+      fetchData()
     }, [fetchGoals, fetchCertifications]),
   )
 
@@ -247,7 +259,10 @@ export default function HomeScreen() {
       })
 
       await fetchGoals()
-      await fetchCertifications()
+      const updatedGoals = await fetchGoals()
+      if (updatedGoals) {
+        await fetchCertifications(updatedGoals)
+      }
     } catch (error) {
       console.error("Error uploading image:", error)
       // Remove the temporary certification if upload fails
@@ -265,34 +280,30 @@ export default function HomeScreen() {
     console.log(`Rendering certifications:`, certifications)
     return (
       <>
-        {certifications.length > 0 ? (
-          certifications.map((cert) => {
-            console.log(`Rendering certification:`, cert)
-            const userGoals = groupGoals[cert.userId] || []
-            const certGoal =
-              userGoals.find((g) => g.id === cert.goalId) ||
-              ({
-                id: cert.goalId,
-                icon: "🎯",
-                color: "#387aff",
-                name: "Group Goal",
-                progress: 0,
-                weeklyGoal: 1,
-              } as Goal)
-            return (
-              <CertificationCard
-                key={cert.id}
-                certification={cert}
-                goal={certGoal}
-                user={users[cert.userId] || currentUser}
-                isLoading={cert.id === uploadingCertification?.id}
-                currentUser={currentUser}
-              />
-            )
-          })
-        ) : (
-          <Text style={styles.noCertificationsText}>인증된 목표가 없습니다.</Text>
-        )}
+        {certifications.map((cert) => {
+          console.log(`Rendering certification:`, cert)
+          const userGoals = groupGoals[cert.userId] || []
+          const certGoal =
+            userGoals.find((g) => g.id === cert.goalId) ||
+            ({
+              id: cert.goalId,
+              icon: "🎯",
+              color: "#387aff",
+              name: "Group Goal",
+              progress: 0,
+              weeklyGoal: 1,
+            } as Goal)
+          return (
+            <CertificationCard
+              key={cert.id}
+              certification={cert}
+              goal={certGoal}
+              user={users[cert.userId] || currentUser}
+              isLoading={cert.id === uploadingCertification?.id}
+              currentUser={currentUser}
+            />
+          )
+        })}
       </>
     )
   }
@@ -342,16 +353,17 @@ const styles = StyleSheet.create({
     textAlign: "center",
     color: "#387aff",
     marginBottom: 10,
+    fontFamily: "MungyeongGamhongApple",
   },
   timeTextAlmostUp: {
     color: "#ff3873",
   },
   headerText: {
-    fontSize: 20,
-    fontWeight: "500",
+    fontSize: 18,
+    fontWeight: "600",
     textAlign: "center",
-    marginBottom: 20,
-    color: "#000000",
+    marginBottom: 16,
+    color: "#6A6A6A",
   },
   certificationContainer: {
     marginTop: 10,
@@ -370,20 +382,6 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 16,
     fontWeight: "bold",
-  },
-  sectionTitle: {
-    fontSize: 18,
-    fontWeight: "bold",
-    color: "#000000",
-    marginTop: 20,
-    marginBottom: 10,
-  },
-  noCertificationsText: {
-    textAlign: "center",
-    fontSize: 16,
-    color: "#767676",
-    marginTop: 10,
-    marginBottom: 20,
   },
 })
 

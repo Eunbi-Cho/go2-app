@@ -1,6 +1,16 @@
 import type React from "react"
 import { useState, useEffect } from "react"
-import { View, StyleSheet, TouchableOpacity, Text, Alert, ActivityIndicator } from "react-native"
+import {
+  View,
+  Text,
+  StyleSheet,
+  TouchableOpacity,
+  Alert,
+  ActivityIndicator,
+  ImageBackground,
+  KeyboardAvoidingView,
+  Platform,
+} from "react-native"
 import * as KakaoUser from "@react-native-kakao/user"
 import auth from "@react-native-firebase/auth"
 import firestore from "@react-native-firebase/firestore"
@@ -15,6 +25,30 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
+    const checkLoginStatus = async () => {
+      try {
+        const token = await KakaoUser.getAccessToken()
+        if (token) {
+          const profile = await KakaoUser.me()
+          const uniqueId = `kakao_${profile.id}`
+          const password = `${uniqueId}_fixed_string`
+
+          try {
+            await auth().signInWithEmailAndPassword(profile.email, password)
+            console.log("Auto login successful")
+          } catch (error) {
+            console.error("Auto login failed:", error)
+          }
+        }
+      } catch (error) {
+        console.log("No Kakao access token available")
+      }
+    }
+
+    checkLoginStatus()
+  }, [])
+
+  useEffect(() => {
     const checkKakaoLogin = async () => {
       try {
         const token = await KakaoUser.getAccessToken()
@@ -22,7 +56,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           console.log("Kakao access token is available")
         }
       } catch (error: any) {
-        if (error.code === 'TokenNotFound') {
+        if (error.code === "TokenNotFound") {
           console.log("No Kakao access token available - normal state for new login")
         } else {
           console.error("Error checking Kakao login status:", error)
@@ -70,7 +104,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const handleKakaoLogin = async () => {
     if (isLoading) return
     setIsLoading(true)
-    
+
     try {
       // 1. 카카오 로그인
       const token = await KakaoUser.login()
@@ -92,15 +126,15 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       try {
         const userCredential = await auth().signInWithEmailAndPassword(profile.email, password)
         console.log("기존 사용자 로그인 성공")
-        
+
         const userDoc = await firestore().collection("users").doc(userCredential.user.uid).get()
         const userData = userDoc.data()
-        
+
         onLoginSuccess({
           nickname: userData?.nickname ?? profile.nickname ?? "Unknown",
           profileImageUrl: userData?.profileImageUrl ?? "",
         })
-        
+
         return // 로그인 성공시 종료
       } catch (signInError: any) {
         // 로그인 실패시 (계정이 없는 경우) 새로 생성
@@ -119,7 +153,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           throw signInError // 다른 에러는 그대로 던지기
         }
       }
-
+      // Kakao login is already handled in handleKakaoLogin function
+      console.log("Kakao login successful")
     } catch (error: any) {
       console.error("로그인 실패:", error)
       let errorMessage = "로그인 과정에서 오류가 발생했습니다."
@@ -139,56 +174,75 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   }
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>고이고이</Text>
-      <Text style={styles.subtitle}>친구들과 함께 목표를 달성해보세요!</Text>
-      <TouchableOpacity 
-        style={styles.button} 
-        onPress={handleKakaoLogin} 
-        disabled={isLoading}
-      >
-        {isLoading ? (
-          <ActivityIndicator color="#000000" />
-        ) : (
-          <Text style={styles.buttonText}>카카오로 시작하기</Text>
-        )}
-      </TouchableOpacity>
-    </View>
+    <ImageBackground source={require("../assets/login-background.png")} style={styles.backgroundImage}>
+      <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.container}>
+        <View style={styles.contentContainer}>
+          <Text style={styles.title1}>로그인하고</Text>
+          <Text style={styles.title2}>챌린지에</Text>
+          <Text style={styles.title3}>참가하세요</Text>
+          <TouchableOpacity style={styles.button} onPress={handleKakaoLogin} disabled={isLoading}>
+            {isLoading ? (
+              <ActivityIndicator color="#000000" />
+            ) : (
+              <Text style={styles.buttonText}>카카오로 시작하기</Text>
+            )}
+          </TouchableOpacity>
+        </View>
+      </KeyboardAvoidingView>
+    </ImageBackground>
   )
 }
 
 const styles = StyleSheet.create({
+  backgroundImage: {
+    flex: 1,
+    resizeMode: "cover",
+  },
   container: {
     flex: 1,
-    justifyContent: "center",
+    justifyContent: "flex-end",
     alignItems: "center",
-    backgroundColor: "#f8f8f8",
-    padding: 20,
   },
-  title: {
+  contentContainer: {
+    padding: 40,
+    width: "100%",
+    alignItems: "flex-start",
+  },
+  title1: {
     fontSize: 32,
     fontWeight: "bold",
     marginBottom: 10,
-    color: "#000000",
+    color: "#606060",
+    fontFamily: "MungyeongGamhongApple",
   },
-  subtitle: {
-    fontSize: 16,
-    color: "#000000",
+  title2: {
+    fontSize: 32,
+    fontWeight: "bold",
+    marginBottom: 10,
+    color: "#FFC100",
+    fontFamily: "MungyeongGamhongApple",
+  },
+  title3: {
+    fontSize: 32,
+    fontWeight: "bold",
     marginBottom: 30,
-    textAlign: "center",
+    color: "#606060",
+    fontFamily: "MungyeongGamhongApple",
   },
   button: {
-    backgroundColor: "#FEE500",
-    padding: 10,
-    borderRadius: 5,
+    backgroundColor: "#FFC100",
+    padding: 15,
+    borderRadius: 10,
     width: "100%",
     alignItems: "center",
+    marginBottom: 40,
   },
   buttonText: {
-    color: "#000000",
+    color: "#ffffff",
     fontSize: 16,
     fontWeight: "bold",
   },
 })
 
 export default LoginScreen
+
