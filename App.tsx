@@ -8,8 +8,9 @@ import { Ionicons } from "@expo/vector-icons"
 import { SafeAreaProvider } from "react-native-safe-area-context"
 import { initializeKakaoSDK } from "@react-native-kakao/core"
 import * as Font from "expo-font"
+import * as SplashScreen from "expo-splash-screen"
 import type { RootStackParamList, MainTabsParamList, UserProfile } from "./types/navigation"
-import { View, ActivityIndicator, Text, StyleSheet } from "react-native"
+import { StyleSheet, View } from "react-native"
 import type React from "react"
 import auth from "@react-native-firebase/auth"
 import firestore from "@react-native-firebase/firestore"
@@ -21,9 +22,13 @@ import ChallengeScreen from "./screens/ChallengeScreen"
 import ProfileScreen from "./screens/ProfileScreen"
 import GoalCreationScreen from "./screens/GoalCreationScreen"
 import FriendProfileScreen from "./screens/FriendProfileScreen"
+import CertificationSuccessScreen from "./screens/CertificationSuccessScreen"
 
 const Tab = createBottomTabNavigator<MainTabsParamList>()
 const Stack = createNativeStackNavigator<RootStackParamList>()
+
+// Keep the splash screen visible while we fetch resources
+SplashScreen.preventAutoHideAsync()
 
 type MainTabsProps = {
   userProfile: UserProfile
@@ -76,10 +81,8 @@ const MainTabs: React.FC<MainTabsProps> = ({ userProfile, handleLogout }) => {
 export default function App() {
   const [isLoggedIn, setIsLoggedIn] = useState(false)
   const [userProfile, setUserProfile] = useState<UserProfile | null>(null)
-  const [fontsLoaded, setFontsLoaded] = useState(false)
-  const [isInitialized, setIsInitialized] = useState(false)
-  const [initializing, setInitializing] = useState(true)
   const [hasGoals, setHasGoals] = useState(false)
+  const [appIsReady, setAppIsReady] = useState(false)
   const navigationRef = useRef<NavigationContainerRef<RootStackParamList>>(null)
 
   const loadFonts = useCallback(async () => {
@@ -87,7 +90,6 @@ export default function App() {
       ...Ionicons.font,
       MungyeongGamhongApple: require("./assets/fonts/Mungyeong-Gamhong-Apple.otf"),
     })
-    setFontsLoaded(true)
   }, [])
 
   const checkUserGoals = useCallback(async (userId: string) => {
@@ -127,31 +129,37 @@ export default function App() {
   }, [])
 
   useEffect(() => {
-    const initializeApp = async () => {
+    async function prepare() {
       try {
-        console.log("Starting app initialization...")
-        console.log("KAKAO_APP_KEY:", EXPO_KAKAO_APP_KEY)
+        // Keep the splash screen visible while we fetch resources
+        await SplashScreen.preventAutoHideAsync()
 
+        // Initialize Kakao SDK
         if (!EXPO_KAKAO_APP_KEY) {
           throw new Error("Kakao App Key is not defined")
         }
-
         await initializeKakaoSDK(EXPO_KAKAO_APP_KEY)
-        console.log("Kakao SDK initialized successfully")
 
+        // Request user permission for notifications
         await requestUserPermission()
 
+        // Load fonts
         await loadFonts()
-        console.log("Fonts loaded successfully")
 
-        setIsInitialized(true)
-      } catch (error) {
-        console.error("Error during app initialization:", error)
+        // Artificially delay for two seconds to simulate a slow loading
+        await new Promise((resolve) => setTimeout(resolve, 2000))
+      } catch (e) {
+        console.warn(e)
+      } finally {
+        // Tell the application to render
+        setAppIsReady(true)
       }
     }
 
-    initializeApp()
+    prepare()
+  }, [loadFonts, requestUserPermission]) // Added requestUserPermission to dependencies
 
+  useEffect(() => {
     const unsubscribe = auth().onAuthStateChanged(async (user) => {
       if (user) {
         setIsLoggedIn(true)
@@ -174,24 +182,21 @@ export default function App() {
           setUserProfile(null)
         } finally {
           await getFCMToken()
-          setInitializing(false)
         }
       } else {
         setIsLoggedIn(false)
         setUserProfile(null)
         setHasGoals(false)
-        setInitializing(false)
       }
     })
 
     return () => unsubscribe()
-  }, [loadFonts, checkUserGoals, getFCMToken])
+  }, [checkUserGoals, getFCMToken])
 
   useEffect(() => {
     const unsubscribe = messaging().onMessage(async (remoteMessage) => {
       console.log("Foreground Message received:", remoteMessage)
-      // 여기에서 알림을 표시하는 로직을 구현할 수 있습니다.
-      // 예: react-native-toast-message 라이브러리를 사용하여 토스트 메시지 표시
+      // Implement your foreground notification handling logic here
     })
 
     return unsubscribe
@@ -199,7 +204,7 @@ export default function App() {
 
   messaging().setBackgroundMessageHandler(async (remoteMessage) => {
     console.log("Background Message received:", remoteMessage)
-    // 여기에서 백그라운드 알림 처리 로직을 구현할 수 있습니다.
+    // Implement your background notification handling logic here
   })
 
   const handleLoginSuccess = async (profile: UserProfile) => {
@@ -209,11 +214,7 @@ export default function App() {
     if (currentUser) {
       const userHasGoals = await checkUserGoals(currentUser.uid)
       setHasGoals(userHasGoals)
-      if (!userHasGoals) {
-        navigationRef.current?.navigate("GoalCreation", { userProfile: profile, isInitialGoal: true })
-      } else {
-        navigationRef.current?.navigate("MainTabs", { userProfile: profile, handleLogout })
-      }
+      navigationRef.current?.navigate("MainTabs", { userProfile: profile, handleLogout })
     }
     console.log("App userProfile set:", profile)
   }
@@ -224,43 +225,55 @@ export default function App() {
     setHasGoals(false)
   }
 
-  if (!fontsLoaded || !isInitialized || initializing) {
-    return (
-      <View style={styles.loadingContainer}>
-        <ActivityIndicator size="large" color="#387aff" />
-        <Text style={styles.loadingText}>앱을 초기화하는 중...</Text>
-      </View>
-    )
+  const onLayoutRootView = useCallback(async () => {
+    if (appIsReady) {
+      // This tells the splash screen to hide immediately! If we call this after
+      // `setAppIsReady`, then we may see a blank screen while the app is
+      // loading its initial state and rendering its first pixels. So instead,
+      // we hide the splash screen once we know the root view has already
+      // performed layout.
+      await SplashScreen.hideAsync()
+    }
+  }, [appIsReady])
+
+  if (!appIsReady) {
+    return null
   }
 
   return (
-    <SafeAreaProvider style={{ backgroundColor: "#f8f8f8" }}>
-      <NavigationContainer ref={navigationRef}>
-        <Stack.Navigator screenOptions={{ headerShown: false }}>
-          {!isLoggedIn ? (
-            <Stack.Screen name="Login">
-              {(props) => <LoginScreen {...props} onLoginSuccess={handleLoginSuccess} />}
-            </Stack.Screen>
-          ) : (
-            <>
-              <Stack.Screen name="MainTabs">
-                {() => <MainTabs userProfile={userProfile!} handleLogout={handleLogout} />}
+    <View style={styles.container} onLayout={onLayoutRootView}>
+      <SafeAreaProvider style={{ backgroundColor: "#f8f8f8" }}>
+        <NavigationContainer ref={navigationRef}>
+          <Stack.Navigator screenOptions={{ headerShown: false }}>
+            {!isLoggedIn ? (
+              <Stack.Screen name="Login">
+                {(props) => <LoginScreen {...props} onLoginSuccess={handleLoginSuccess} />}
               </Stack.Screen>
-              <Stack.Screen
-                name="GoalCreation"
-                component={GoalCreationScreen}
-                initialParams={{ userProfile: userProfile!, isInitialGoal: !hasGoals }}
-              />
-              <Stack.Screen name="FriendProfile" component={FriendProfileScreen} />
-            </>
-          )}
-        </Stack.Navigator>
-      </NavigationContainer>
-    </SafeAreaProvider>
+            ) : (
+              <>
+                <Stack.Screen name="MainTabs">
+                  {() => <MainTabs userProfile={userProfile!} handleLogout={handleLogout} />}
+                </Stack.Screen>
+                <Stack.Screen
+                  name="GoalCreation"
+                  component={GoalCreationScreen}
+                  initialParams={{ userProfile: userProfile!, isInitialGoal: !hasGoals }}
+                />
+                <Stack.Screen name="FriendProfile" component={FriendProfileScreen} />
+                <Stack.Screen name="CertificationSuccess" component={CertificationSuccessScreen} />
+              </>
+            )}
+          </Stack.Navigator>
+        </NavigationContainer>
+      </SafeAreaProvider>
+    </View>
   )
 }
 
 const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+  },
   loadingContainer: {
     flex: 1,
     justifyContent: "center",

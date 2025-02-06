@@ -1,8 +1,10 @@
 import type React from "react"
-import { useState } from "react"
-import { View, Text, StyleSheet, TouchableOpacity, FlatList } from "react-native"
+import { useState, useEffect } from "react"
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert } from "react-native"
 import Modal from "react-native-modal"
 import * as ImagePicker from "expo-image-picker"
+import * as MediaLibrary from "expo-media-library"
+import { startOfDay, endOfDay } from "date-fns"
 import type { Goal } from "../types/goal"
 
 interface GoalAndImageSelectionModalProps {
@@ -19,39 +21,90 @@ const GoalAndImageSelectionModal: React.FC<GoalAndImageSelectionModalProps> = ({
   onImageSelected,
 }) => {
   const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null)
+  const [hasPermission, setHasPermission] = useState(false)
   const isEmpty = goals.length === 0
+
+  useEffect(() => {
+    ;(async () => {
+      const { status } = await MediaLibrary.requestPermissionsAsync()
+      setHasPermission(status === "granted")
+    })()
+  }, [])
 
   const handleGoalSelect = (goal: Goal) => {
     setSelectedGoal(goal)
   }
 
   const handleImagePick = async () => {
-    if (!selectedGoal) return
+    if (!selectedGoal || isEmpty) {
+      Alert.alert("알림", "목표를 선택해주세요.")
+      return
+    }
 
-    const result = await ImagePicker.launchImageLibraryAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 1,
-    })
+    if (!hasPermission) {
+      Alert.alert("권한 필요", "갤러리 접근 권한이 필요합니다.")
+      return
+    }
 
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      onImageSelected(selectedGoal.id, result.assets[0].uri)
+    try {
+      const today = new Date()
+      const startOfToday = startOfDay(today)
+      const endOfToday = endOfDay(today)
+
+      const result = await ImagePicker.launchImageLibraryAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 1,
+      })
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        const pickerAsset = result.assets[0]
+        const mediaLibraryAsset = await MediaLibrary.createAssetAsync(pickerAsset.uri)
+
+        if (
+          mediaLibraryAsset.creationTime >= startOfToday.getTime() &&
+          mediaLibraryAsset.creationTime <= endOfToday.getTime()
+        ) {
+          onImageSelected(selectedGoal.id, pickerAsset.uri)
+        } else {
+          Alert.alert("알림", "오늘 촬영한 사진만 선택할 수 있습니다.")
+        }
+      }
+    } catch (error) {
+      console.error("Error picking image:", error)
+      Alert.alert("오류", "이미지를 선택하는 중 문제가 발생했습니다.")
     }
   }
 
   const handleCameraLaunch = async () => {
-    if (!selectedGoal) return
+    try {
+      if (!selectedGoal || isEmpty) {
+        Alert.alert("알림", "목표를 선택해주세요.")
+        return
+      }
 
-    const result = await ImagePicker.launchCameraAsync({
-      mediaTypes: ImagePicker.MediaTypeOptions.Images,
-      allowsEditing: true,
-      aspect: [1, 1],
-      quality: 1,
-    })
+      const { status } = await ImagePicker.requestCameraPermissionsAsync()
+      if (status !== "granted") {
+        Alert.alert("권한 필요", "카메라 사용을 위해 권한이 필요합니다.")
+        return
+      }
 
-    if (!result.canceled && result.assets && result.assets.length > 0) {
-      onImageSelected(selectedGoal.id, result.assets[0].uri)
+      const result = await ImagePicker.launchCameraAsync({
+        mediaTypes: ImagePicker.MediaTypeOptions.Images,
+        allowsEditing: true,
+        aspect: [1, 1],
+        quality: 1,
+      })
+
+      if (!result.canceled && result.assets && result.assets.length > 0) {
+        onImageSelected(selectedGoal.id, result.assets[0].uri)
+      } else {
+        console.log("Camera capture canceled or failed")
+      }
+    } catch (error) {
+      console.error("Error launching camera:", error)
+      Alert.alert("오류", "카메라를 실행하는 중 문제가 발생했습니다.")
     }
   }
 
@@ -86,16 +139,16 @@ const GoalAndImageSelectionModal: React.FC<GoalAndImageSelectionModalProps> = ({
         )}
         <View style={styles.buttonContainer}>
           <TouchableOpacity
-            style={[styles.button, isEmpty && styles.disabledButton]}
+            style={[styles.button, (!selectedGoal || isEmpty) && styles.disabledButton]}
             onPress={handleImagePick}
-            disabled={isEmpty}
+            disabled={!selectedGoal || isEmpty}
           >
             <Text style={styles.buttonText}>갤러리에서 선택</Text>
           </TouchableOpacity>
           <TouchableOpacity
-            style={[styles.button, isEmpty && styles.disabledButton]}
+            style={[styles.button, (!selectedGoal || isEmpty) && styles.disabledButton]}
             onPress={handleCameraLaunch}
-            disabled={isEmpty}
+            disabled={!selectedGoal || isEmpty}
           >
             <Text style={styles.buttonText}>지금 촬영</Text>
           </TouchableOpacity>

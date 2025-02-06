@@ -12,7 +12,6 @@ interface CircularProgressProps {
 const CircularProgress: React.FC<CircularProgressProps> = ({ size, strokeWidth, progress, color }) => {
   const radius = (size - strokeWidth) / 2
   const circumference = radius * 2 * Math.PI
-  const progressOffset = circumference - (progress / 100) * circumference
 
   return (
     <View style={[styles.container, { width: size, height: size }]}>
@@ -26,7 +25,7 @@ const CircularProgress: React.FC<CircularProgressProps> = ({ size, strokeWidth, 
           r={radius}
           strokeWidth={strokeWidth}
           strokeDasharray={circumference}
-          strokeDashoffset={progressOffset}
+          strokeDashoffset={circumference - (progress / 100) * circumference}
           strokeLinecap="round"
           transform={`rotate(-90, ${size / 2}, ${size / 2})`}
         />

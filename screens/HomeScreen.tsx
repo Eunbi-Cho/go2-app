@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from "react"
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
-import { useFocusEffect } from "@react-navigation/native"
+import { useFocusEffect, useNavigation } from "@react-navigation/native"
 import firestore from "@react-native-firebase/firestore"
 import storage from "@react-native-firebase/storage"
 import auth from "@react-native-firebase/auth"
@@ -11,8 +11,10 @@ import type { Goal } from "../types/goal"
 import type { Certification } from "../types/certification"
 import type { User } from "../types/user"
 import { startOfWeek } from "date-fns"
+import type { RootStackNavigationProp } from "../types/navigation"
 
-export default function HomeScreen() {
+export default function HomeScreen({ navigation }: { navigation: RootStackNavigationProp }) {
+  const navigationProp = useNavigation<RootStackNavigationProp>()
   const [remainingTime, setRemainingTime] = useState<string>("")
   const [isTimeAlmostUp, setIsTimeAlmostUp] = useState<boolean>(false)
   const [showModal, setShowModal] = useState(false)
@@ -185,45 +187,14 @@ export default function HomeScreen() {
     if (!currentUser) return
 
     try {
-      const timestamp = firestore.Timestamp.now()
-
-      // Create a temporary certification object for the skeleton loader
-      const tempCertification: Certification = {
-        id: "temp_" + Date.now(),
-        userId: currentUser.uid,
-        goalId: goalId,
-        imageUrl: "",
-        timestamp: timestamp,
-        goalProgress: 0,
-        goalWeeklyGoal: 0,
-      }
-      setUploadingCertification(tempCertification)
-      setUserCertifications((prev) => [tempCertification, ...prev])
-
-      const imageUrl = await uploadImage(imageUri)
-
-      const selectedGoal = goals.find((goal) => goal.id === goalId)
+      const selectedGoal: Goal | undefined = goals.find((goal) => goal.id === goalId)
       if (!selectedGoal) {
         throw new Error("Selected goal not found")
       }
 
+      const timestamp = firestore.Timestamp.now()
       const newProgress = selectedGoal.progress + 1
       const progressPercentage = (newProgress / selectedGoal.weeklyGoal) * 100
-
-      const newCertification: Omit<Certification, "id"> = {
-        userId: currentUser.uid,
-        goalId: goalId,
-        imageUrl: imageUrl,
-        timestamp: timestamp,
-        goalProgress: progressPercentage,
-        goalWeeklyGoal: selectedGoal.weeklyGoal,
-      }
-
-      const docRef = await firestore().collection("certifications").add(newCertification)
-      const addedCertification: Certification = { id: docRef.id, ...newCertification }
-
-      setUserCertifications((prev) => [addedCertification, ...prev.filter((cert) => cert.id !== tempCertification.id)])
-      setUploadingCertification(null)
 
       // Update goal progress and days
       const goalRef = firestore().collection("goals").doc(goalId)
@@ -258,6 +229,37 @@ export default function HomeScreen() {
         })
       })
 
+      // Fetch updated goal data
+      const updatedGoalDoc = await firestore().collection("goals").doc(goalId).get()
+      const updatedGoalData = updatedGoalDoc.data() as Goal
+
+      // Navigate to CertificationSuccessScreen immediately
+      navigation.navigate("CertificationSuccess", {
+        goalName: selectedGoal.name,
+        goalColor: selectedGoal.color,
+        goalIcon: selectedGoal.icon || undefined,
+        imageUri: imageUri,
+        goalId: goalId,
+        goalProgress: updatedGoalData.progress,
+        goalWeeklyGoal: updatedGoalData.weeklyGoal,
+      })
+
+      // Upload image in the background
+      const imageUrl = await uploadImage(imageUri)
+
+      // Save certification data after image upload
+      const newCertification: Omit<Certification, "id"> = {
+        userId: currentUser.uid,
+        goalId: goalId,
+        imageUrl: imageUrl,
+        timestamp: timestamp,
+        goalProgress: progressPercentage,
+        goalWeeklyGoal: selectedGoal.weeklyGoal,
+      }
+
+      await firestore().collection("certifications").add(newCertification)
+
+      // Refresh goals and certifications
       await fetchGoals()
       const updatedGoals = await fetchGoals()
       if (updatedGoals) {
@@ -265,14 +267,7 @@ export default function HomeScreen() {
       }
     } catch (error) {
       console.error("Error uploading image:", error)
-      // Remove the temporary certification if upload fails
-      setUserCertifications((prev) => prev.filter((cert) => cert.id !== "temp_" + Date.now()))
-      setUploadingCertification(null)
-
-      // Show error message to user
-      Alert.alert("업로드 실패", "이미지 업로드 중 오류가 발생했습니다. 다시 시도해 주세요.", [
-        { text: "확인", onPress: () => console.log("OK Pressed") },
-      ])
+      Alert.alert("업로드 실패", "이미지 업로드 중 오류가 발생했습니다. 다시 시도해 주세요.")
     }
   }
 
