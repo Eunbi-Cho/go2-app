@@ -1,4 +1,7 @@
-import React, { useEffect } from "react"
+"use client"
+
+import type React from "react"
+import { useEffect, useState } from "react"
 import { View, Text, StyleSheet, TouchableOpacity, Platform, StatusBar, ActivityIndicator } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import type { NativeStackScreenProps } from "@react-navigation/native-stack"
@@ -7,6 +10,7 @@ import Animated, { useSharedValue, withTiming, useAnimatedProps, Easing } from "
 import * as Haptics from "expo-haptics"
 import Svg, { Circle } from "react-native-svg"
 import { lightenColor } from "../utils/colorUtils"
+import firestore from "@react-native-firebase/firestore"
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle)
 
@@ -45,7 +49,7 @@ const CircularProgress: React.FC<{
 
 export default function CertificationSuccessScreen({ route, navigation }: CertificationSuccessScreenProps) {
   const { goalName, goalColor, goalIcon, goalId, imageUri, goalProgress, goalWeeklyGoal } = route.params
-  const [isLoading, setIsLoading] = React.useState(false)
+  const [isUploading, setIsUploading] = useState(true)
 
   const animatedProgress = useSharedValue(0)
 
@@ -59,7 +63,47 @@ export default function CertificationSuccessScreen({ route, navigation }: Certif
     if (Platform.OS === "ios") {
       Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
     }
-  }, [animatedProgress, goalProgress, goalWeeklyGoal])
+
+    const checkUploadStatus = async () => {
+      try {
+        const certificationRef = firestore()
+          .collection("certifications")
+          .where("goalId", "==", goalId)
+          .orderBy("timestamp", "desc")
+          .limit(1)
+        const unsubscribe = certificationRef.onSnapshot(
+          (snapshot) => {
+            if (snapshot && !snapshot.empty) {
+              const latestCertification = snapshot.docs[0].data()
+              if (latestCertification.imageUrl) {
+                setIsUploading(false)
+                unsubscribe()
+              }
+            }
+          },
+          (error) => {
+            console.error("Error checking upload status:", error)
+            setIsUploading(false)
+          },
+        )
+
+        return unsubscribe
+      } catch (error) {
+        console.error("Error setting up upload status check:", error)
+        setIsUploading(false)
+        return () => {}
+      }
+    }
+
+    const unsubscribePromise = checkUploadStatus()
+    return () => {
+      unsubscribePromise.then((unsubscribe) => {
+        if (typeof unsubscribe === "function") {
+          unsubscribe()
+        }
+      })
+    }
+  }, [animatedProgress, goalProgress, goalWeeklyGoal, goalId])
 
   const handleComplete = () => {
     if (Platform.OS === "ios") {
@@ -88,7 +132,7 @@ export default function CertificationSuccessScreen({ route, navigation }: Certif
                 <View style={[styles.iconContainer, { backgroundColor: `${goalColor}50` }]}>
                   <Text style={styles.iconText}>{goalIcon}</Text>
                 </View>
-                {isLoading && (
+                {isUploading && (
                   <View style={styles.loadingOverlay}>
                     <ActivityIndicator size="large" color={goalColor} />
                   </View>

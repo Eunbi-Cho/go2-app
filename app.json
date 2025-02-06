@@ -18,7 +18,8 @@
       "bundleIdentifier": "com.go2go2",
       "infoPlist": {
         "NSPhotoLibraryUsageDescription": "이 앱은 목표 달성 인증을 위해 사진에 접근합니다.",
-        "NSCameraUsageDescription": "이 앱은 목표 달성 인증을 위해 카메라에 접근합니다."
+        "NSCameraUsageDescription": "이 앱은 목표 달성 인증을 위해 카메라에 접근합니다.",
+        "usesAppleSignIn": true
       }
     },
     "android": {

@@ -1,3 +1,5 @@
+"use client"
+
 import { EXPO_KAKAO_APP_KEY } from "@env"
 import "react-native-gesture-handler"
 import { useEffect, useState, useRef, useCallback } from "react"
@@ -15,6 +17,8 @@ import type React from "react"
 import auth from "@react-native-firebase/auth"
 import firestore from "@react-native-firebase/firestore"
 import messaging from "@react-native-firebase/messaging"
+import * as KakaoUser from "@react-native-kakao/user"
+import { appleAuth } from "@invertase/react-native-apple-authentication"
 
 import LoginScreen from "./screens/LoginScreen"
 import HomeScreen from "./screens/HomeScreen"
@@ -33,9 +37,10 @@ SplashScreen.preventAutoHideAsync()
 type MainTabsProps = {
   userProfile: UserProfile
   handleLogout: () => void
+  updateUserProfile: (newProfile: UserProfile) => void
 }
 
-const MainTabs: React.FC<MainTabsProps> = ({ userProfile, handleLogout }) => {
+const MainTabs: React.FC<MainTabsProps> = ({ userProfile, handleLogout, updateUserProfile }) => {
   return (
     <Tab.Navigator
       initialRouteName="Home"
@@ -72,7 +77,14 @@ const MainTabs: React.FC<MainTabsProps> = ({ userProfile, handleLogout }) => {
       <Tab.Screen name="Home" component={HomeScreen} />
       <Tab.Screen name="Challenge" component={ChallengeScreen} />
       <Tab.Screen name="Profile">
-        {(props) => <ProfileScreen {...props} userProfile={userProfile} handleLogout={handleLogout} />}
+        {(props) => (
+          <ProfileScreen
+            {...props}
+            userProfile={userProfile}
+            handleLogout={handleLogout}
+            updateUserProfile={updateUserProfile}
+          />
+        )}
       </Tab.Screen>
     </Tab.Navigator>
   )
@@ -102,7 +114,7 @@ export default function App() {
     }
   }, [])
 
-  const requestUserPermission = async () => {
+  const requestUserPermission = useCallback(async () => {
     const authStatus = await messaging().requestPermission()
     const enabled =
       authStatus === messaging.AuthorizationStatus.AUTHORIZED ||
@@ -111,7 +123,7 @@ export default function App() {
     if (enabled) {
       console.log("Authorization status:", authStatus)
     }
-  }
+  }, [])
 
   const getFCMToken = useCallback(async () => {
     try {
@@ -119,45 +131,49 @@ export default function App() {
       console.log("FCM Token:", token)
       const currentUser = auth().currentUser
       if (currentUser) {
-        await firestore().collection("users").doc(currentUser.uid).update({
-          fcmToken: token,
-        })
+        const userRef = firestore().collection("users").doc(currentUser.uid)
+        const userDoc = await userRef.get()
+
+        if (userDoc.exists) {
+          await userRef.update({
+            fcmToken: token,
+          })
+        } else {
+          await userRef.set({
+            uid: currentUser.uid,
+            email: currentUser.email,
+            fcmToken: token,
+            createdAt: firestore.FieldValue.serverTimestamp(),
+          })
+        }
+        console.log("FCM token saved/updated successfully")
       }
     } catch (error) {
-      console.error("Error getting FCM token:", error)
+      console.error("Error getting or saving FCM token:", error)
     }
   }, [])
 
   useEffect(() => {
     async function prepare() {
       try {
-        // Keep the splash screen visible while we fetch resources
         await SplashScreen.preventAutoHideAsync()
 
-        // Initialize Kakao SDK
         if (!EXPO_KAKAO_APP_KEY) {
           throw new Error("Kakao App Key is not defined")
         }
         await initializeKakaoSDK(EXPO_KAKAO_APP_KEY)
-
-        // Request user permission for notifications
         await requestUserPermission()
-
-        // Load fonts
         await loadFonts()
-
-        // Artificially delay for two seconds to simulate a slow loading
         await new Promise((resolve) => setTimeout(resolve, 2000))
       } catch (e) {
         console.warn(e)
       } finally {
-        // Tell the application to render
         setAppIsReady(true)
       }
     }
 
     prepare()
-  }, [loadFonts, requestUserPermission]) // Added requestUserPermission to dependencies
+  }, [loadFonts, requestUserPermission])
 
   useEffect(() => {
     const unsubscribe = auth().onAuthStateChanged(async (user) => {
@@ -167,18 +183,32 @@ export default function App() {
           const userDoc = await firestore().collection("users").doc(user.uid).get()
           if (userDoc.exists) {
             const userData = userDoc.data()
+            console.log("Fetched user data:", userData)
             setUserProfile({
-              nickname: userData?.nickname || "Unknown",
-              profileImageUrl: userData?.profileImageUrl || "",
+              nickname: userData?.nickname || user.displayName || "Unknown",
+              profileImageUrl:
+                userData?.profileImageUrl || user.photoURL || require("./assets/default-profile-image.png"),
             })
             const userHasGoals = await checkUserGoals(user.uid)
             setHasGoals(userHasGoals)
           } else {
-            console.error("User document does not exist in Firestore")
-            setUserProfile(null)
+            console.log("User document does not exist in Firestore, creating new document")
+            const newUserData = {
+              uid: user.uid,
+              email: user.email,
+              nickname: user.displayName || "Unknown",
+              profileImageUrl: user.photoURL || require("./assets/default-profile-image.png"),
+              createdAt: firestore.FieldValue.serverTimestamp(),
+            }
+            await firestore().collection("users").doc(user.uid).set(newUserData)
+            setUserProfile({
+              nickname: newUserData.nickname,
+              profileImageUrl: newUserData.profileImageUrl,
+            })
           }
+          console.log("User profile set:", userProfile)
         } catch (error) {
-          console.error("Error fetching user profile:", error)
+          console.error("Error fetching or creating user profile:", error)
           setUserProfile(null)
         } finally {
           await getFCMToken()
@@ -191,12 +221,11 @@ export default function App() {
     })
 
     return () => unsubscribe()
-  }, [checkUserGoals, getFCMToken])
+  }, [checkUserGoals, getFCMToken, userProfile]) // Added userProfile to dependencies
 
   useEffect(() => {
     const unsubscribe = messaging().onMessage(async (remoteMessage) => {
       console.log("Foreground Message received:", remoteMessage)
-      // Implement your foreground notification handling logic here
     })
 
     return unsubscribe
@@ -204,7 +233,6 @@ export default function App() {
 
   messaging().setBackgroundMessageHandler(async (remoteMessage) => {
     console.log("Background Message received:", remoteMessage)
-    // Implement your background notification handling logic here
   })
 
   const handleLoginSuccess = async (profile: UserProfile) => {
@@ -219,19 +247,57 @@ export default function App() {
     console.log("App userProfile set:", profile)
   }
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
+    console.log("Starting logout process...")
+    try {
+      // Kakao 로그아웃 시도
+      try {
+        const isKakaoLoggedIn = await KakaoUser.getAccessToken()
+        if (isKakaoLoggedIn) {
+          await KakaoUser.logout()
+          console.log("Kakao logout successful")
+        }
+      } catch (kakaoError) {
+        console.log("Not logged in with Kakao")
+      }
+
+      // Apple 로그아웃 시도
+      if (appleAuth.isSupported) {
+        try {
+          const user = auth().currentUser
+          if (user?.providerData[0]?.providerId === "apple.com") {
+            await appleAuth.performRequest({
+              requestedOperation: appleAuth.Operation.LOGOUT,
+            })
+            console.log("Apple logout successful")
+          }
+        } catch (appleError) {
+          console.log("Apple logout skipped")
+        }
+      }
+
+      // Firebase 로그아웃
+      const user = auth().currentUser
+      if (user) {
+        await auth().signOut()
+        console.log("Firebase logout successful")
+      }
+    } catch (error) {
+      console.error("Logout error:", error)
+    }
+    // 모든 로그아웃 시도 후 앱 상태 업데이트
     setIsLoggedIn(false)
     setUserProfile(null)
     setHasGoals(false)
+    console.log("App state updated after logout")
+  }
+
+  const updateUserProfile = (newProfile: UserProfile) => {
+    setUserProfile(newProfile)
   }
 
   const onLayoutRootView = useCallback(async () => {
     if (appIsReady) {
-      // This tells the splash screen to hide immediately! If we call this after
-      // `setAppIsReady`, then we may see a blank screen while the app is
-      // loading its initial state and rendering its first pixels. So instead,
-      // we hide the splash screen once we know the root view has already
-      // performed layout.
       await SplashScreen.hideAsync()
     }
   }, [appIsReady])
@@ -252,7 +318,13 @@ export default function App() {
             ) : (
               <>
                 <Stack.Screen name="MainTabs">
-                  {() => <MainTabs userProfile={userProfile!} handleLogout={handleLogout} />}
+                  {() => (
+                    <MainTabs
+                      userProfile={userProfile!}
+                      handleLogout={handleLogout}
+                      updateUserProfile={updateUserProfile}
+                    />
+                  )}
                 </Stack.Screen>
                 <Stack.Screen
                   name="GoalCreation"

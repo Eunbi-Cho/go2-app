@@ -1,3 +1,5 @@
+"use client"
+
 import { useState, useEffect, useCallback } from "react"
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, ActivityIndicator, Alert } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
@@ -10,7 +12,6 @@ import CertificationCard from "../components/CertificationCard"
 import type { Goal } from "../types/goal"
 import type { Certification } from "../types/certification"
 import type { User } from "../types/user"
-import { startOfWeek } from "date-fns"
 import type { RootStackNavigationProp } from "../types/navigation"
 
 export default function HomeScreen({ navigation }: { navigation: RootStackNavigationProp }) {
@@ -21,6 +22,7 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
   const [goals, setGoals] = useState<Goal[]>([])
   const [userCertifications, setUserCertifications] = useState<Certification[]>([])
   const [isLoading, setIsLoading] = useState(true)
+  const [isUploading, setIsUploading] = useState(false)
   const [uploadingCertification, setUploadingCertification] = useState<Certification | null>(null)
   const [users, setUsers] = useState<{ [key: string]: User }>({})
   const [currentUser, setCurrentUser] = useState<User | null>(null)
@@ -127,18 +129,6 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
       ...doc.data(),
     })) as Certification[]
 
-    // 현재 사용자의 인증샷 중 삭제된 목표의 인증샷을 필터링합니다.
-    const filteredCertifications = certificationsData.filter((cert) => {
-      if (cert.userId === currentUser.uid) {
-        // 현재 사용자의 인증샷인 경우, 해당 목표가 존재하는지 확인
-        return userGoals.some((goal) => goal.id === cert.goalId)
-      }
-      // 다른 사용자의 인증샷은 모두 표시
-      return true
-    })
-
-    setUserCertifications(filteredCertifications)
-
     // Fetch group members' goals
     const groupGoals: { [userId: string]: Goal[] } = {}
     const groupGoalsSnapshot = await firestore().collection("goals").where("userId", "in", memberIds).get()
@@ -151,6 +141,17 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
     })
     setGroupGoals(groupGoals)
 
+    // 현재 사용자의 인증샷 중 삭제된 목표의 인증샷을 필터링합니다.
+    const filteredCertifications = certificationsData.filter((cert) => {
+      if (cert.userId === currentUser.uid) {
+        // 현재 사용자의 인증샷인 경우, 해당 목표가 존재하는지 확인
+        return userGoals.some((goal) => goal.id === cert.goalId)
+      }
+      // 다른 사용자의 인증샷은 해당 사용자의 현재 목표와 일치하는지 확인
+      return groupGoals[cert.userId]?.some((goal) => goal.id === cert.goalId)
+    })
+
+    setUserCertifications(filteredCertifications)
     setIsLoading(false)
   }, [])
 
@@ -186,6 +187,7 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
     const currentUser = auth().currentUser
     if (!currentUser) return
 
+    setIsUploading(true)
     try {
       const selectedGoal: Goal | undefined = goals.find((goal) => goal.id === goalId)
       if (!selectedGoal) {
@@ -206,7 +208,8 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
 
         const goalData = goalDoc.data() as Goal
         const currentDate = new Date()
-        const currentWeekStart = startOfWeek(currentDate, { weekStartsOn: 1 })
+        const currentWeekStart = new Date(currentDate.setDate(currentDate.getDate() - currentDate.getDay() + 1))
+        currentWeekStart.setHours(0, 0, 0, 0)
 
         let newProgress = goalData.progress
         let newDays = [...goalData.days]
@@ -268,6 +271,8 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
     } catch (error) {
       console.error("Error uploading image:", error)
       Alert.alert("업로드 실패", "이미지 업로드 중 오류가 발생했습니다. 다시 시도해 주세요.")
+    } finally {
+      setIsUploading(false)
     }
   }
 
@@ -314,8 +319,12 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
         </View>
       </ScrollView>
 
-      <TouchableOpacity style={styles.uploadButton} onPress={handleUploadPress}>
-        <Text style={styles.uploadButtonText}>인증샷 올리기</Text>
+      <TouchableOpacity
+        style={[styles.uploadButton, isUploading && styles.disabledButton]}
+        onPress={handleUploadPress}
+        disabled={isUploading}
+      >
+        <Text style={styles.uploadButtonText}>{isUploading ? "인증샷 업로드 중..." : "인증샷 올리기"}</Text>
       </TouchableOpacity>
 
       <GoalAndImageSelectionModal
@@ -372,6 +381,9 @@ const styles = StyleSheet.create({
     padding: 15,
     borderRadius: 10,
     alignItems: "center",
+  },
+  disabledButton: {
+    backgroundColor: "#a5a5a5",
   },
   uploadButtonText: {
     color: "#ffffff",

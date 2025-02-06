@@ -1,3 +1,5 @@
+"use client"
+
 import type React from "react"
 import { useState, useEffect } from "react"
 import {
@@ -15,6 +17,7 @@ import * as KakaoUser from "@react-native-kakao/user"
 import auth from "@react-native-firebase/auth"
 import firestore from "@react-native-firebase/firestore"
 import storage from "@react-native-firebase/storage"
+import { appleAuth } from "@invertase/react-native-apple-authentication"
 import type { UserProfile } from "../types/navigation"
 
 interface LoginScreenProps {
@@ -48,25 +51,6 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     checkLoginStatus()
   }, [])
 
-  useEffect(() => {
-    const checkKakaoLogin = async () => {
-      try {
-        const token = await KakaoUser.getAccessToken()
-        if (token) {
-          console.log("Kakao access token is available")
-        }
-      } catch (error: any) {
-        if (error.code === "TokenNotFound") {
-          console.log("No Kakao access token available - normal state for new login")
-        } else {
-          console.error("Error checking Kakao login status:", error)
-        }
-      }
-    }
-
-    checkKakaoLogin()
-  }, [])
-
   const uploadProfileImage = async (imageUrl: string, userId: string): Promise<string> => {
     try {
       const response = await fetch(imageUrl)
@@ -81,20 +65,22 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     }
   }
 
-  const saveUserToFirestore = async (user: any, kakaoProfile: any, firebaseImageUrl: string) => {
+  const saveUserToFirestore = async (user: any, profile: any, profileImageUrl: string) => {
     try {
-      await firestore().collection("users").doc(user.uid).set(
-        {
-          uid: user.uid,
-          email: kakaoProfile.email,
-          nickname: kakaoProfile.nickname,
-          profileImageUrl: firebaseImageUrl,
-          kakaoId: kakaoProfile.id,
-          friends: [],
-          createdAt: firestore.FieldValue.serverTimestamp(),
-        },
-        { merge: true },
-      )
+      const userData = {
+        uid: user.uid,
+        email: profile.email,
+        nickname: profile.nickname || profile.name || "Unknown",
+        profileImageUrl: profileImageUrl,
+        kakaoId: profile.id,
+        friends: [],
+        createdAt: firestore.FieldValue.serverTimestamp(),
+      }
+
+      // Filter out undefined values
+      const filteredUserData = Object.fromEntries(Object.entries(userData).filter(([_, value]) => value !== undefined))
+
+      await firestore().collection("users").doc(user.uid).set(filteredUserData, { merge: true })
     } catch (error) {
       console.error("Error saving user to Firestore:", error)
       throw error
@@ -106,23 +92,19 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     setIsLoading(true)
 
     try {
-      // 1. 카카오 로그인
       const token = await KakaoUser.login()
       if (!token) {
         throw new Error("Failed to obtain Kakao access token")
       }
 
-      // 2. 카카오 프로필 가져오기
       const profile = await KakaoUser.me()
       if (!profile.email) {
         throw new Error("카카오 계정에 이메일이 없습니다. 이메일을 등록해주세요.")
       }
 
-      // 3. Firebase 인증
       const uniqueId = `kakao_${profile.id}`
       const password = `${uniqueId}_fixed_string`
 
-      // 먼저 로그인 시도
       try {
         const userCredential = await auth().signInWithEmailAndPassword(profile.email, password)
         console.log("기존 사용자 로그인 성공")
@@ -135,9 +117,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           profileImageUrl: userData?.profileImageUrl ?? "",
         })
 
-        return // 로그인 성공시 종료
+        return
       } catch (signInError: any) {
-        // 로그인 실패시 (계정이 없는 경우) 새로 생성
         if (signInError.code === "auth/user-not-found") {
           const newUserCredential = await auth().createUserWithEmailAndPassword(profile.email, password)
           console.log("새 사용자 생성 성공")
@@ -150,11 +131,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             profileImageUrl: firebaseImageUrl,
           })
         } else {
-          throw signInError // 다른 에러는 그대로 던지기
+          throw signInError
         }
       }
-      // Kakao login is already handled in handleKakaoLogin function
-      console.log("Kakao login successful")
     } catch (error: any) {
       console.error("로그인 실패:", error)
       let errorMessage = "로그인 과정에서 오류가 발생했습니다."
@@ -173,6 +152,84 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     }
   }
 
+  const handleAppleLogin = async () => {
+    if (isLoading) return
+    setIsLoading(true)
+
+    try {
+      const appleAuthRequestResponse = await appleAuth.performRequest({
+        requestedOperation: appleAuth.Operation.LOGIN,
+        requestedScopes: [appleAuth.Scope.EMAIL, appleAuth.Scope.FULL_NAME],
+      })
+
+      console.log("Apple Auth Response:", appleAuthRequestResponse)
+
+      if (!appleAuthRequestResponse.identityToken) {
+        throw new Error("Apple Sign-In failed - no identity token returned")
+      }
+
+      const { identityToken, nonce, fullName, email } = appleAuthRequestResponse
+      const appleCredential = auth.AppleAuthProvider.credential(identityToken, nonce)
+
+      const userCredential = await auth().signInWithCredential(appleCredential)
+      const { user } = userCredential
+
+      console.log("Full Name from Apple:", fullName)
+      console.log("User from Firebase:", user)
+
+      const defaultProfileImage = require("../assets/default-profile-image.png")
+
+      // 이름 구성 로직
+      let userName = "Unknown"
+      if (fullName && (fullName.givenName || fullName.familyName)) {
+        userName = `${fullName.givenName || ""} ${fullName.familyName || ""}`.trim()
+      } else {
+        userName = `User_${Math.floor(Math.random() * 10000)}`
+      }
+
+      console.log("User name set to:", userName)
+
+      const userDoc = await firestore().collection("users").doc(user.uid).get()
+
+      if (!userDoc.exists) {
+        const userData = {
+          uid: user.uid,
+          email: email || user.email,
+          nickname: userName,
+          profileImageUrl: user.photoURL || defaultProfileImage,
+          createdAt: firestore.FieldValue.serverTimestamp(),
+        }
+        await firestore().collection("users").doc(user.uid).set(userData)
+        console.log("New user data saved to Firestore:", userData)
+
+        onLoginSuccess({
+          nickname: userName,
+          profileImageUrl: user.photoURL || defaultProfileImage,
+        })
+      } else {
+        const userData = userDoc.data()
+        // 기존 유저의 경우 저장된 이름을 우선적으로 사용하되, 없으면 새로 생성한 이름 사용
+        const nickname = userData?.nickname || userName
+        await firestore().collection("users").doc(user.uid).update({ nickname })
+        console.log("Existing user data updated in Firestore:", { nickname })
+
+        onLoginSuccess({
+          nickname: nickname,
+          profileImageUrl: userData?.profileImageUrl || user.photoURL || defaultProfileImage,
+        })
+      }
+      console.log("Login success, user profile:", {
+        nickname: userName,
+        profileImageUrl: user.photoURL || defaultProfileImage,
+      })
+    } catch (error: any) {
+      console.error("Apple login failed:", error)
+      Alert.alert("로그인 실패", "Apple 로그인 과정에서 오류가 발생했습니다.")
+    } finally {
+      setIsLoading(false)
+    }
+  }
+
   return (
     <ImageBackground source={require("../assets/login-background.png")} style={styles.backgroundImage}>
       <KeyboardAvoidingView behavior={Platform.OS === "ios" ? "padding" : "height"} style={styles.container}>
@@ -180,13 +237,22 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           <Text style={styles.title1}>로그인하고</Text>
           <Text style={styles.title2}>챌린지에</Text>
           <Text style={styles.title3}>참가하세요</Text>
-          <TouchableOpacity style={styles.button} onPress={handleKakaoLogin} disabled={isLoading}>
+          <TouchableOpacity style={styles.kakaoButton} onPress={handleKakaoLogin} disabled={isLoading}>
             {isLoading ? (
               <ActivityIndicator color="#000000" />
             ) : (
-              <Text style={styles.buttonText}>카카오로 시작하기</Text>
+              <Text style={styles.kakaoButtonText}>카카오로 시작하기</Text>
             )}
           </TouchableOpacity>
+          {Platform.OS === "ios" && (
+            <TouchableOpacity style={styles.appleButton} onPress={handleAppleLogin} disabled={isLoading}>
+              {isLoading ? (
+                <ActivityIndicator color="#ffffff" />
+              ) : (
+                <Text style={styles.appleButtonText}>Apple로 시작하기</Text>
+              )}
+            </TouchableOpacity>
+          )}
         </View>
       </KeyboardAvoidingView>
     </ImageBackground>
@@ -225,19 +291,31 @@ const styles = StyleSheet.create({
   title3: {
     fontSize: 32,
     fontWeight: "bold",
-    marginBottom: 30,
+    marginBottom: 20,
     color: "#606060",
     fontFamily: "MungyeongGamhongApple",
   },
-  button: {
+  kakaoButton: {
     backgroundColor: "#FFC100",
     padding: 15,
     borderRadius: 10,
     width: "100%",
     alignItems: "center",
-    marginBottom: 40,
+    marginBottom: 10,
   },
-  buttonText: {
+  kakaoButtonText: {
+    color: "#000000",
+    fontSize: 16,
+    fontWeight: "bold",
+  },
+  appleButton: {
+    backgroundColor: "#000000",
+    padding: 15,
+    borderRadius: 10,
+    width: "100%",
+    alignItems: "center",
+  },
+  appleButtonText: {
     color: "#ffffff",
     fontSize: 16,
     fontWeight: "bold",

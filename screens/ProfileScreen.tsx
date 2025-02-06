@@ -1,5 +1,7 @@
+"use client"
+
 import type React from "react"
-import { useState, useCallback } from "react"
+import { useState, useCallback, useEffect } from "react"
 import {
   View,
   Text,
@@ -13,37 +15,69 @@ import {
   Platform,
   ActionSheetIOS,
   Modal,
+  TextInput,
 } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import type { RouteProp } from "@react-navigation/native"
-import type { MainTabsNavigationProp } from "../types/navigation"
-import type { MainTabsParamList } from "../types/navigation"
+import type { MainTabsNavigationProp, MainTabsParamList } from "../types/navigation"
 import { useFocusEffect } from "@react-navigation/native"
 import firestore from "@react-native-firebase/firestore"
 import auth from "@react-native-firebase/auth"
+import storage from "@react-native-firebase/storage"
 import * as KakaoUser from "@react-native-kakao/user"
 import { Ionicons } from "@expo/vector-icons"
 import type { Goal } from "../types/goal"
 import CircularProgress from "../components/CircularProgress"
 import type { UserProfile } from "../types/navigation"
 import { startOfWeek } from "date-fns"
+import { launchImageLibrary } from "react-native-image-picker"
+import SkeletonLoader from "../components/SkeletonLoader"
 
 type ProfileScreenProps = {
   navigation: MainTabsNavigationProp
   route: RouteProp<MainTabsParamList, "Profile">
   userProfile: UserProfile
   handleLogout: () => void
+  updateUserProfile: (newProfile: UserProfile) => void
 }
 
-const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation, route, userProfile, handleLogout }) => {
+const ProfileScreen: React.FC<ProfileScreenProps> = ({
+  navigation,
+  route,
+  userProfile,
+  handleLogout,
+  updateUserProfile,
+}) => {
   const [goals, setGoals] = useState<Goal[]>([])
   const MAX_GOALS = 4
-  const [isLoading, setIsLoading] = useState(true)
+  // const [isLoading, setIsLoading] = useState(true) //Removed
   const [refreshing, setRefreshing] = useState(false)
   const [showAndroidModal, setShowAndroidModal] = useState(false)
   const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null)
   const [todayCertifications, setTodayCertifications] = useState<string[]>([])
   const [weekCertifications, setWeekCertifications] = useState<{ [goalId: string]: { [day: number]: boolean } }>({})
+  const [localUserProfile, setLocalUserProfile] = useState<UserProfile>(userProfile)
+  const [isEditingName, setIsEditingName] = useState(false)
+  const [newNickname, setNewNickname] = useState(localUserProfile.nickname)
+  const [isImageLoading, setIsImageLoading] = useState(false)
+  const [isNameLoading, setIsNameLoading] = useState(false)
+
+  useEffect(() => {
+    const fetchUserProfile = async () => {
+      const currentUser = auth().currentUser
+      if (currentUser) {
+        const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
+        if (userDoc.exists) {
+          const userData = userDoc.data()
+          setLocalUserProfile({
+            nickname: userData?.nickname || "사용자",
+            profileImageUrl: userData?.profileImageUrl || require("../assets/default-profile-image.png"),
+          })
+        }
+      }
+    }
+    fetchUserProfile()
+  }, [])
 
   const handleLogoutPress = () => {
     Alert.alert("로그아웃", "정말 로그아웃 하시겠습니까?", [
@@ -56,9 +90,19 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation, route, userPr
         style: "destructive",
         onPress: async () => {
           try {
-            await KakaoUser.logout()
-            await auth().signOut()
-            handleLogout() // This should be provided by the parent component
+            const user = auth().currentUser
+            if (user) {
+              try {
+                const isKakaoLoggedIn = await KakaoUser.getAccessToken()
+                if (isKakaoLoggedIn) {
+                  await KakaoUser.logout()
+                }
+              } catch (error) {
+                console.log("Kakao logout skipped")
+              }
+              await auth().signOut()
+            }
+            handleLogout()
           } catch (error) {
             console.error("로그아웃 중 오류 발생:", error)
             Alert.alert("오류", "로그아웃 중 문제가 발생했습니다. 다시 시도해 주세요.")
@@ -154,7 +198,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation, route, userPr
     } catch (error) {
       console.error("Error fetching goals and certifications:", error)
     } finally {
-      setIsLoading(false)
+      //setIsLoading(false) //Removed
       setRefreshing(false)
     }
   }, [])
@@ -179,7 +223,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation, route, userPr
   }, [fetchGoals])
 
   const handleEditGoal = (goal: Goal) => {
-    navigation.navigate("GoalCreation", { userProfile, goal, isInitialGoal: false })
+    navigation.navigate("GoalCreation", { userProfile: localUserProfile, goal, isInitialGoal: false })
   }
 
   const handleDeleteGoal = (goal: Goal) => {
@@ -226,7 +270,62 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation, route, userPr
     }
   }
 
-  if (!userProfile) {
+  const handleChangeProfileImage = async () => {
+    const result = await launchImageLibrary({
+      mediaType: "photo",
+      quality: 1,
+    })
+
+    if (result.assets && result.assets.length > 0) {
+      const selectedImage = result.assets[0]
+      const currentUser = auth().currentUser
+
+      if (currentUser && selectedImage.uri) {
+        try {
+          setIsImageLoading(true)
+          const reference = storage().ref(`profile_images/${currentUser.uid}.jpg`)
+          await reference.putFile(selectedImage.uri)
+          const downloadURL = await reference.getDownloadURL()
+
+          await firestore().collection("users").doc(currentUser.uid).update({
+            profileImageUrl: downloadURL,
+          })
+
+          setLocalUserProfile((prev) => ({ ...prev, profileImageUrl: downloadURL }))
+          // Alert.alert("성공", "프로필 이미지가 업데이트되었습니다.") // 이 줄을 제거합니다.
+        } catch (error) {
+          console.error("Error updating profile image:", error)
+          // Alert.alert("오류", "프로필 이미지 업데이트 중 오류가 발생했습니다.") // 이 줄을 제거합니다.
+        } finally {
+          setIsImageLoading(false)
+        }
+      }
+    }
+  }
+
+  const handleSaveNickname = async () => {
+    const currentUser = auth().currentUser
+    if (currentUser) {
+      try {
+        setIsNameLoading(true)
+        await firestore().collection("users").doc(currentUser.uid).update({
+          nickname: newNickname,
+        })
+        setLocalUserProfile((prev) => ({ ...prev, nickname: newNickname }))
+        setIsEditingName(false)
+        updateUserProfile({ ...localUserProfile, nickname: newNickname })
+        navigation.setParams({ userProfile: { ...userProfile, nickname: newNickname } })
+        // Alert.alert("성공", "닉네임이 업데이트되었습니다.") // 이 줄을 제거합니다.
+      } catch (error) {
+        console.error("Error updating nickname:", error)
+        // Alert.alert("오류", "닉네임 업데이트 중 오류가 발생했습니다.") // 이 줄을 제거합니다.
+      } finally {
+        setIsNameLoading(false)
+      }
+    }
+  }
+
+  if (!localUserProfile) {
     return (
       <View style={styles.container}>
         <ActivityIndicator size="large" color="#387aff" />
@@ -235,13 +334,14 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation, route, userPr
     )
   }
 
-  if (isLoading) {
-    return (
-      <View style={styles.container}>
-        <ActivityIndicator size="large" color="#387aff" />
-      </View>
-    )
-  }
+  //Removed isLoading condition
+  // if (isLoading) {
+  //   return (
+  //     <View style={styles.container}>
+  //       <ActivityIndicator size="large" color="#387aff" />
+  //     </View>
+  //   )
+  // }
 
   const today = new Date().getDay()
 
@@ -256,9 +356,50 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation, route, userPr
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.profileImageContainer}>
-          <Image source={{ uri: userProfile.profileImageUrl }} style={styles.profileImage} />
+          {isImageLoading ? (
+            <SkeletonLoader width={100} height={100} style={styles.profileImage} />
+          ) : (
+            <Image
+              source={
+                typeof localUserProfile.profileImageUrl === "string"
+                  ? { uri: localUserProfile.profileImageUrl }
+                  : localUserProfile.profileImageUrl
+              }
+              style={styles.profileImage}
+              onLoad={() => setIsImageLoading(false)}
+            />
+          )}
+          <TouchableOpacity style={styles.changeImageButton} onPress={handleChangeProfileImage}>
+            <Ionicons name="add-circle" size={24} color="#387aff" />
+          </TouchableOpacity>
         </View>
-        <Text style={styles.name}>{userProfile.nickname}</Text>
+        <View style={styles.nameContainer}>
+          {isEditingName ? (
+            <>
+              <TextInput
+                style={styles.nameInput}
+                value={newNickname}
+                onChangeText={setNewNickname}
+                autoFocus
+                editable={!isNameLoading}
+              />
+              <TouchableOpacity onPress={handleSaveNickname} disabled={isNameLoading}>
+                {isNameLoading ? (
+                  <ActivityIndicator size="small" color="#387aff" />
+                ) : (
+                  <Ionicons name="checkmark-circle" size={24} color="#387aff" />
+                )}
+              </TouchableOpacity>
+            </>
+          ) : (
+            <>
+              <Text style={styles.name}>{localUserProfile.nickname}</Text>
+              <TouchableOpacity onPress={() => setIsEditingName(true)}>
+                <Ionicons name="pencil" size={18} color="#387aff" />
+              </TouchableOpacity>
+            </>
+          )}
+        </View>
         <Text style={styles.sectionTitle}>이번주 목표 현황</Text>
 
         {goals.map((goal) => {
@@ -320,7 +461,9 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({ navigation, route, userPr
 
       <TouchableOpacity
         style={[styles.addButton, goals.length >= MAX_GOALS && styles.disabledButton]}
-        onPress={() => navigation.navigate("GoalCreation", { userProfile, isInitialGoal: false, goal: undefined })}
+        onPress={() =>
+          navigation.navigate("GoalCreation", { userProfile: localUserProfile, isInitialGoal: false, goal: undefined })
+        }
         disabled={goals.length >= MAX_GOALS}
       >
         <Text style={styles.addButtonText}>
@@ -386,13 +529,37 @@ const styles = StyleSheet.create({
   profileImageContainer: {
     alignItems: "center",
     marginBottom: 20,
+    position: "relative",
+  },
+  changeImageButton: {
+    position: "absolute",
+    bottom: 0,
+    right: 0,
+    backgroundColor: "#ffffff",
+    borderRadius: 20,
+    padding: 2,
   },
   name: {
     fontSize: 20,
+    marginRight: 10,
+    color: "#000000",
+    fontFamily: "MungyeongGamhongApple",
+  },
+  nameContainer: {
+    flexDirection: "row",
+    alignItems: "center",
+    justifyContent: "center",
     marginBottom: 30,
+  },
+  nameInput: {
+    fontSize: 20,
     color: "#000000",
     textAlign: "center",
     fontFamily: "MungyeongGamhongApple",
+    borderBottomWidth: 1,
+    borderBottomColor: "#387aff",
+    paddingBottom: 5,
+    marginRight: 10,
   },
   sectionTitle: {
     fontSize: 16,

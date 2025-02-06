@@ -11,6 +11,7 @@ import GoalIcons from "../components/GoalIcons"
 import { useNavigation } from "@react-navigation/native"
 import type { RootStackNavigationProp } from "../types/navigation"
 import Svg, { Path } from "react-native-svg"
+import { useIsFocused } from "@react-navigation/native"
 
 interface ChallengeMember {
   id: string
@@ -358,6 +359,13 @@ export default function ChallengeScreen() {
     : (displayMembers as (ChallengeMember & { rank: number })[])
 
   const navigation = useNavigation<RootStackNavigationProp>()
+  const isFocused = useIsFocused()
+
+  useEffect(() => {
+    if (isFocused) {
+      fetchChallengeGroup()
+    }
+  }, [isFocused, fetchChallengeGroup])
 
   return (
     <SafeAreaView style={styles.container}>
