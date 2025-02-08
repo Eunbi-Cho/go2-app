@@ -55,11 +55,11 @@
 		<true/>
 	</dict>
 	<key>NSCameraUsageDescription</key>
-	<string>$(PRODUCT_NAME)에서 인증샷 촬영을 위해 카메라 접근이 필요합니다.</string>
+	<string>인증샷 촬영을 위해 카메라 접근이 필요합니다.</string>
 	<key>NSMicrophoneUsageDescription</key>
-	<string>$(PRODUCT_NAME)에서 인증샷 촬영을 위해 마이크 접근이 필요합니다.</string>
+	<string>인증샷 촬영을 위해 마이크 접근이 필요합니다.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
-	<string>$(PRODUCT_NAME)에서 인증샷 업로드를 위해 갤러리 접근이 필요합니다.</string>
+	<string>인증샷 및 프로필 이미지 업로드를 위해 갤러리 접근이 필요합니다.</string>
 	<key>UIAppFonts</key>
 	<array>
 		<string>Mungyeong-Gamhong-Apple.otf</string>
