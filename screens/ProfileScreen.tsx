@@ -30,8 +30,8 @@ import type { Goal } from "../types/goal"
 import CircularProgress from "../components/CircularProgress"
 import type { UserProfile } from "../types/navigation"
 import { startOfWeek } from "date-fns"
-import { launchImageLibrary } from "react-native-image-picker"
 import SkeletonLoader from "../components/SkeletonLoader"
+import * as ImagePicker from "expo-image-picker"
 
 type ProfileScreenProps = {
   navigation: MainTabsNavigationProp
@@ -271,8 +271,18 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
   }
 
   const handleChangeProfileImage = async () => {
-    const result = await launchImageLibrary({
-      mediaType: "photo",
+    if (Platform.OS !== "web") {
+      const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync()
+      if (status !== "granted") {
+        Alert.alert("권한 필요", "프로필 이미지 변경을 위해 갤러리 접근 권한이 필요합니다.")
+        return
+      }
+    }
+
+    const result = await ImagePicker.launchImageLibraryAsync({
+      mediaTypes: ImagePicker.MediaTypeOptions.Images,
+      allowsEditing: true,
+      aspect: [1, 1],
       quality: 1,
     })
 
@@ -292,10 +302,8 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
           })
 
           setLocalUserProfile((prev) => ({ ...prev, profileImageUrl: downloadURL }))
-          // Alert.alert("성공", "프로필 이미지가 업데이트되었습니다.") // 이 줄을 제거합니다.
         } catch (error) {
           console.error("Error updating profile image:", error)
-          // Alert.alert("오류", "프로필 이미지 업데이트 중 오류가 발생했습니다.") // 이 줄을 제거합니다.
         } finally {
           setIsImageLoading(false)
         }
@@ -315,10 +323,8 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
         setIsEditingName(false)
         updateUserProfile({ ...localUserProfile, nickname: newNickname })
         navigation.setParams({ userProfile: { ...userProfile, nickname: newNickname } })
-        // Alert.alert("성공", "닉네임이 업데이트되었습니다.") // 이 줄을 제거합니다.
       } catch (error) {
         console.error("Error updating nickname:", error)
-        // Alert.alert("오류", "닉네임 업데이트 중 오류가 발생했습니다.") // 이 줄을 제거합니다.
       } finally {
         setIsNameLoading(false)
       }
@@ -333,15 +339,6 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
       </View>
     )
   }
-
-  //Removed isLoading condition
-  // if (isLoading) {
-  //   return (
-  //     <View style={styles.container}>
-  //       <ActivityIndicator size="large" color="#387aff" />
-  //     </View>
-  //   )
-  // }
 
   const today = new Date().getDay()
 

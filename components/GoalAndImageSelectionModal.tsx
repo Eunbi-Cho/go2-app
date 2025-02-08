@@ -2,7 +2,7 @@
 
 import type React from "react"
 import { useState, useEffect } from "react"
-import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert } from "react-native"
+import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert, Platform } from "react-native"
 import Modal from "react-native-modal"
 import * as ImagePicker from "expo-image-picker"
 import type { Goal } from "../types/goal"
@@ -37,6 +37,14 @@ const GoalAndImageSelectionModal: React.FC<GoalAndImageSelectionModalProps> = ({
 
   const handleImagePick = async () => {
     try {
+      if (Platform.OS !== "web") {
+        const { status } = await ImagePicker.requestMediaLibraryPermissionsAsync()
+        if (status !== "granted") {
+          Alert.alert("권한 필요", "인증샷 업로드를 위해 갤러리 접근 권한이 필요합니다.")
+          return
+        }
+      }
+
       const result = await ImagePicker.launchImageLibraryAsync({
         mediaTypes: ImagePicker.MediaTypeOptions.Images,
         quality: 0.8,
@@ -59,7 +67,7 @@ const GoalAndImageSelectionModal: React.FC<GoalAndImageSelectionModalProps> = ({
     try {
       const { status } = await ImagePicker.requestCameraPermissionsAsync()
       if (status !== "granted") {
-        Alert.alert("권한 필요", "카메라 사용을 위해 권한이 필요합니다.")
+        Alert.alert("권한 필요", "인증샷 촬영을 위해 카메라 접근 권한이 필요합니다.")
         return
       }
 
