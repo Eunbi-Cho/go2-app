@@ -79,13 +79,16 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     }
   }
 
-  const checkEmailExists = async (email: string): Promise<boolean> => {
+  const checkUserExists = async (email: string, loginType: string): Promise<boolean> => {
     try {
-      const result = await auth().fetchSignInMethodsForEmail(email)
-      return result.length > 0
+      const userSnapshot = await firestore().collection("users").where("email", "==", email).get()
+      if (userSnapshot.empty) {
+        return false
+      }
+      const userData = userSnapshot.docs[0].data()
+      return userData.loginType === loginType
     } catch (error) {
-      console.error("Error checking email existence:", error)
-      // 이메일 확인 중 오류가 발생하면 false를 반환하여 새 계정 생성을 허용합니다.
+      console.error("Error checking user existence:", error)
       return false
     }
   }
@@ -112,26 +115,30 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         throw new Error("카카오 계정에 이메일이 없습니다. 이메일을 등록해주세요.")
       }
 
-      const emailExists = await checkEmailExists(email)
-      if (emailExists) {
-        Alert.alert("계정 존재", "이미 이 이메일로 가입된 계정이 있습니다. 다른 로그인 방식을 시도해주세요.", [
-          { text: "확인", onPress: () => setIsLoading(false) },
-        ])
-        return
+      const userExists = await checkUserExists(email, "kakao")
+      if (userExists) {
+        // 기존 Kakao 사용자로 로그인
+        const userCredential = await auth().signInWithEmailAndPassword(email, `kakao_${profile.id}`)
+        const user = userCredential.user
+        const userDoc = await firestore().collection("users").doc(user.uid).get()
+        const userData = userDoc.data()
+        onLoginSuccess({
+          nickname: userData?.nickname || "Unknown",
+          profileImageUrl: userData?.profileImageUrl || require("../assets/default-profile-image.png"),
+        })
+      } else {
+        // 새 사용자 생성
+        const userCredential = await auth().createUserWithEmailAndPassword(email, `kakao_${profile.id}`)
+        console.log("새 사용자 생성 성공")
+
+        const firebaseImageUrl = await uploadProfileImage(profile.profileImageUrl ?? "", userCredential.user.uid)
+        await saveUserToFirestore(userCredential.user, profile, firebaseImageUrl, "kakao")
+
+        onLoginSuccess({
+          nickname: profile.nickname ?? "Unknown",
+          profileImageUrl: firebaseImageUrl,
+        })
       }
-
-      const password = `kakao_${profile.id}_${Date.now()}`
-
-      const userCredential = await auth().createUserWithEmailAndPassword(email, password)
-      console.log("새 사용자 생성 성공")
-
-      const firebaseImageUrl = await uploadProfileImage(profile.profileImageUrl ?? "", userCredential.user.uid)
-      await saveUserToFirestore(userCredential.user, profile, firebaseImageUrl, "kakao")
-
-      onLoginSuccess({
-        nickname: profile.nickname ?? "Unknown",
-        profileImageUrl: firebaseImageUrl,
-      })
     } catch (error: any) {
       console.error("로그인 실패:", error)
       let errorMessage = "로그인 과정에서 오류가 발생했습니다."
@@ -141,7 +148,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       } else if (error.message === "카카오 계정에 이메일이 없습니다. 이메일을 등록해주세요.") {
         errorMessage = error.message
       } else if (error.code === "auth/email-already-in-use") {
-        errorMessage = "이미 가입된 이메일입니다. 다른 로그인 방식을 시도해주세요."
+        errorMessage = "이미 다른 방식으로 가입된 이메일입니다. 다른 로그인 방식을 시도해주세요."
       }
 
       Alert.alert("로그인 실패", errorMessage)
@@ -188,9 +195,9 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       }
 
       // 이메일이 있는 경우, 기존 로직을 계속 진행합니다.
-      const emailExists = await checkEmailExists(email)
-      if (emailExists) {
-        // 기존 계정으로 로그인을 시도합니다.
+      const userExists = await checkUserExists(email, "apple")
+      if (userExists) {
+        // 기존 Apple 사용자로 로그인
         const appleCredential = auth.AppleAuthProvider.credential(identityToken, nonce)
         const userCredential = await auth().signInWithCredential(appleCredential)
         const { user } = userCredential
@@ -206,7 +213,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           throw new Error("사용자 정보를 찾을 수 없습니다.")
         }
       } else {
-        // 새 계정 생성 로직 (기존과 동일)
+        // 새 계정 생성 로직
         const appleCredential = auth.AppleAuthProvider.credential(identityToken, nonce)
         const userCredential = await auth().signInWithCredential(appleCredential)
         const { user } = userCredential

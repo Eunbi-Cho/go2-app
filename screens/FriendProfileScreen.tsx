@@ -153,7 +153,17 @@ const FriendProfileScreen: React.FC<FriendProfileScreenProps> = ({ route }) => {
         showsVerticalScrollIndicator={false}
       >
         <View style={styles.profileImageContainer}>
-          <Image source={{ uri: friendProfile?.profileImageUrl }} style={styles.profileImage} />
+          <Image
+            source={
+              friendProfile?.profileImageUrl
+                ? { uri: friendProfile.profileImageUrl }
+                : require("../assets/default-profile-image.png")
+            }
+            style={styles.profileImage}
+            onError={() => {
+              setFriendProfile((prev) => (prev ? { ...prev, profileImageUrl: "" } : null))
+            }}
+          />
         </View>
         <Text style={styles.name}>{friendProfile?.nickname}</Text>
         <Text style={styles.sectionTitle}>이번주 목표 현황</Text>

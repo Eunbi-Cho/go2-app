@@ -20,16 +20,37 @@ const CertificationCard: React.FC<CertificationCardProps> = ({ certification, go
   const [imageLoaded, setImageLoaded] = useState(false)
 
   useEffect(() => {
-    console.log("CertificationCard props:", { certification, goal, user, isLoading })
-  }, [certification, goal, user, isLoading])
+    console.log("CertificationCard props:", {
+      certificationId: certification.id,
+      goalId: goal.id,
+      userId: user?.id || currentUser?.id,
+      userProfileImageUrl: user?.profileImageUrl,
+      currentUserProfileImageUrl: currentUser?.profileImageUrl,
+    })
+    const profileImageSource =
+      user?.profileImageUrl || currentUser?.profileImageUrl
+        ? { uri: user?.profileImageUrl || currentUser?.profileImageUrl }
+        : require("../assets/default-profile-image.png")
+    console.log("Profile image source:", profileImageSource)
+  }, [certification, goal, user, currentUser]) // Added currentUser?.profileImageUrl to dependencies
+
+  useEffect(() => {
+    console.log("CertificationCard props:", {
+      certificationId: certification.id,
+      goalId: goal.id,
+      userId: user?.id,
+      userProfileImageUrl: user?.profileImageUrl,
+    })
+  }, [certification, goal, user])
 
   const progress = (goal.progress / goal.weeklyGoal) * 100
   const lighterColor = lightenColor(goal.color, 0.6)
 
   const profileImageSource =
-    user?.profileImageUrl || currentUser?.profileImageUrl
-      ? { uri: user?.profileImageUrl || currentUser?.profileImageUrl }
+    user?.profileImageUrl && typeof user?.profileImageUrl === "string" && user?.profileImageUrl.startsWith("http")
+      ? { uri: user?.profileImageUrl }
       : require("../assets/default-profile-image.png")
+  console.log("Profile image source:", profileImageSource)
 
   return (
     <View style={styles.card}>
@@ -68,7 +89,15 @@ const CertificationCard: React.FC<CertificationCardProps> = ({ certification, go
               </View>
             </View>
             <View style={styles.profileImageContainer}>
-              <Image source={profileImageSource} style={styles.profileImage} />
+              <Image
+                source={profileImageSource}
+                style={styles.profileImage}
+                defaultSource={require("../assets/default-profile-image.png")}
+                onError={(error) => {
+                  console.log("Error loading profile image:", error.nativeEvent.error)
+                  console.log("Falling back to default image")
+                }}
+              />
             </View>
           </>
         )}

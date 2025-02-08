@@ -1,6 +1,7 @@
 import type { ChallengeHistory } from "../types/challenge"
 import type { Goal } from "../types/goal"
 import type { Certification } from "../types/certification"
+import type { User } from "../types/user"
 import { useState, useEffect, useCallback } from "react"
 import { View, Text, StyleSheet, Image as RNImage, TouchableOpacity, ScrollView, Alert, TextInput } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
@@ -8,10 +9,9 @@ import Clipboard from "@react-native-clipboard/clipboard"
 import auth from "@react-native-firebase/auth"
 import firestore from "@react-native-firebase/firestore"
 import GoalIcons from "../components/GoalIcons"
-import { useNavigation } from "@react-navigation/native"
+import { useNavigation, useFocusEffect } from "@react-navigation/native"
 import type { RootStackNavigationProp } from "../types/navigation"
 import Svg, { Path } from "react-native-svg"
-import { useIsFocused } from "@react-navigation/native"
 
 interface ChallengeMember {
   id: string
@@ -38,6 +38,8 @@ export default function ChallengeScreen() {
   const [isLoadingHistory, setIsLoadingHistory] = useState(false)
   const [currentMonthMembers, setCurrentMonthMembers] = useState<ChallengeMember[]>([])
   const [historicalData, setHistoricalData] = useState<{ [key: string]: ChallengeHistory }>({})
+  const [currentUser, setCurrentUser] = useState<User | null>(null)
+  const [users, setUsers] = useState<{ [userId: string]: User }>({})
 
   const calculateTotalProgress = useCallback((userGoals: Goal[]) => {
     if (userGoals.length === 0) {
@@ -136,11 +138,11 @@ export default function ChallengeScreen() {
   }, [])
 
   const fetchChallengeGroup = useCallback(async () => {
-    const currentUser = auth().currentUser
-    if (!currentUser) return
+    const currentUserAuth = auth().currentUser
+    if (!currentUserAuth) return
 
     console.log("Fetching challenge group")
-    const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
+    const userDoc = await firestore().collection("users").doc(currentUserAuth.uid).get()
     const userData = userDoc.data()
     const groupId = userData?.challengeGroupId
 
@@ -179,8 +181,13 @@ export default function ChallengeScreen() {
 
   useEffect(() => {
     calculateDaysLeft()
-    fetchChallengeGroup()
-  }, [fetchChallengeGroup])
+  }, []) // Removed unnecessary dependency: currentMonth
+
+  useFocusEffect(
+    useCallback(() => {
+      fetchChallengeGroup()
+    }, []),
+  )
 
   const calculateDaysLeft = () => {
     const today = new Date()
@@ -310,7 +317,25 @@ export default function ChallengeScreen() {
     }
   }, [saveChallengeHistory])
 
-  const currentUser = auth().currentUser
+  const currentUserAuth = auth().currentUser
+  useEffect(() => {
+    const fetchCurrentUser = async () => {
+      if (!currentUserAuth) return
+      const currentUserDoc = await firestore().collection("users").doc(currentUserAuth.uid).get()
+      if (currentUserDoc.exists) {
+        const currentUserData = currentUserDoc.data()
+        const currentUserProfile = {
+          id: currentUserAuth.uid,
+          ...currentUserData,
+          profileImageUrl: currentUserData?.profileImageUrl || "",
+        } as User
+        setCurrentUser(currentUserProfile)
+        setUsers((prevUsers) => ({ ...prevUsers, [currentUserAuth.uid]: currentUserProfile }))
+      }
+    }
+    fetchCurrentUser()
+  }, [currentUserAuth])
+
   const now = new Date()
   const currentMonthNum = now.getMonth() + 1
   const currentYearNum = now.getFullYear()
@@ -359,13 +384,6 @@ export default function ChallengeScreen() {
     : (displayMembers as (ChallengeMember & { rank: number })[])
 
   const navigation = useNavigation<RootStackNavigationProp>()
-  const isFocused = useIsFocused()
-
-  useEffect(() => {
-    if (isFocused) {
-      fetchChallengeGroup()
-    }
-  }, [isFocused, fetchChallengeGroup])
 
   return (
     <SafeAreaView style={styles.container}>
@@ -469,7 +487,7 @@ export default function ChallengeScreen() {
             ) : (
               <View style={styles.rankingContainer}>
                 {sortedMembers.map((member) => {
-                  const isCurrentUser = currentUser && member.userId === currentUser.uid
+                  const isCurrentUser = currentUser && member.userId === currentUser?.id
 
                   return (
                     <TouchableOpacity
@@ -486,9 +504,18 @@ export default function ChallengeScreen() {
                           {"rank" in member && member.rank !== undefined ? member.rank : "-"}
                         </Text>
                         <RNImage
-                          source={{ uri: member.profileImage }}
+                          source={
+                            member.profileImage
+                              ? { uri: member.profileImage }
+                              : require("../assets/default-profile-image.png")
+                          }
                           style={styles.profileImage}
-                          onError={(e) => console.log("Error loading image:", e.nativeEvent.error)}
+                          onError={() => {
+                            console.log("Error loading image for member:", member.name)
+                            setCurrentMonthMembers((prevMembers) =>
+                              prevMembers.map((m) => (m.userId === member.userId ? { ...m, profileImage: "" } : m)),
+                            )
+                          }}
                         />
                         <Text style={styles.participantName}>{member.name}</Text>
                       </View>

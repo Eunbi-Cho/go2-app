@@ -302,6 +302,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
           })
 
           setLocalUserProfile((prev) => ({ ...prev, profileImageUrl: downloadURL }))
+          updateUserProfile({ ...localUserProfile, profileImageUrl: downloadURL })
         } catch (error) {
           console.error("Error updating profile image:", error)
         } finally {
@@ -358,12 +359,16 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
           ) : (
             <Image
               source={
-                typeof localUserProfile.profileImageUrl === "string"
+                localUserProfile.profileImageUrl
                   ? { uri: localUserProfile.profileImageUrl }
-                  : localUserProfile.profileImageUrl
+                  : require("../assets/default-profile-image.png")
               }
               style={styles.profileImage}
               onLoad={() => setIsImageLoading(false)}
+              onError={() => {
+                setIsImageLoading(false)
+                setLocalUserProfile((prev) => ({ ...prev, profileImageUrl: "" }))
+              }}
             />
           )}
           <TouchableOpacity style={styles.changeImageButton} onPress={handleChangeProfileImage}>

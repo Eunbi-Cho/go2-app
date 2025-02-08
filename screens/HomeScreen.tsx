@@ -111,13 +111,17 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
         memberIds.map(async (userId) => {
           const userDoc = await firestore().collection("users").doc(userId).get()
           if (userDoc.exists) {
-            usersData[userId] = { id: userId, ...userDoc.data() } as User
+            const userData = userDoc.data()
+            usersData[userId] = {
+              id: userId,
+              ...userData,
+              profileImageUrl: userData?.profileImageUrl || null,
+            } as User
           }
         }),
       )
       setUsers(usersData)
-
-      console.log("Fetched users data:", usersData)
+      console.log("Updated users data:", usersData)
     } else {
       console.log("User is not in a challenge group")
       certificationsQuery = certificationsQuery.where("userId", "==", currentUser.uid)
@@ -307,7 +311,7 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
               key={cert.id}
               certification={cert}
               goal={certGoal}
-              user={users[cert.userId] || currentUser}
+              user={users[cert.userId]}
               isLoading={cert.id === uploadingCertification?.id}
               currentUser={currentUser}
             />
