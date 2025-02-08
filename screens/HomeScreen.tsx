@@ -13,6 +13,7 @@ import type { Goal } from "../types/goal"
 import type { Certification } from "../types/certification"
 import type { User } from "../types/user"
 import type { RootStackNavigationProp } from "../types/navigation"
+import * as FileSystem from "expo-file-system"
 
 export default function HomeScreen({ navigation }: { navigation: RootStackNavigationProp }) {
   const navigationProp = useNavigation<RootStackNavigationProp>()
@@ -171,11 +172,23 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
 
   const uploadImage = async (uri: string): Promise<string> => {
     try {
-      const response = await fetch(uri)
-      const blob = await response.blob()
       const filename = `certification_${Date.now()}.jpg`
+      const tempUri = FileSystem.documentDirectory + filename
+
+      // Copy the image to a temporary location
+      await FileSystem.copyAsync({
+        from: uri,
+        to: tempUri,
+      })
+
       const ref = storage().ref().child(`certification_images/${filename}`)
-      await ref.put(blob)
+
+      // Upload the temporary file
+      await ref.putFile(tempUri)
+
+      // Delete the temporary file
+      await FileSystem.deleteAsync(tempUri, { idempotent: true })
+
       return await ref.getDownloadURL()
     } catch (error) {
       console.error("Error in uploadImage:", error)
