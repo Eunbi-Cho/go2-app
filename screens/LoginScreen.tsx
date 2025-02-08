@@ -33,15 +33,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         const token = await KakaoUser.getAccessToken()
         if (token) {
           const profile = await KakaoUser.me()
-          const uniqueId = `kakao_${profile.id}`
-          const password = `${uniqueId}_fixed_string`
-
-          try {
-            await auth().signInWithEmailAndPassword(profile.email, password)
-            console.log("Auto login successful")
-          } catch (error) {
-            console.error("Auto login failed:", error)
-          }
+          handleKakaoLogin(profile)
         }
       } catch (error) {
         console.log("No Kakao access token available")
@@ -65,19 +57,19 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     }
   }
 
-  const saveUserToFirestore = async (user: any, profile: any, profileImageUrl: string) => {
+  const saveUserToFirestore = async (user: any, profile: any, profileImageUrl: string, loginType: string) => {
     try {
       const userData = {
         uid: user.uid,
         email: profile.email,
-        nickname: profile.nickname || profile.name || "Unknown",
+        nickname: profile.nickname || "Unknown",
         profileImageUrl: profileImageUrl,
         kakaoId: profile.id,
+        loginType: loginType,
         friends: [],
         createdAt: firestore.FieldValue.serverTimestamp(),
       }
 
-      // Filter out undefined values
       const filteredUserData = Object.fromEntries(Object.entries(userData).filter(([_, value]) => value !== undefined))
 
       await firestore().collection("users").doc(user.uid).set(filteredUserData, { merge: true })
@@ -87,63 +79,69 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
     }
   }
 
-  const handleKakaoLogin = async () => {
+  const checkEmailExists = async (email: string): Promise<boolean> => {
+    try {
+      const result = await auth().fetchSignInMethodsForEmail(email)
+      return result.length > 0
+    } catch (error) {
+      console.error("Error checking email existence:", error)
+      // 이메일 확인 중 오류가 발생하면 false를 반환하여 새 계정 생성을 허용합니다.
+      return false
+    }
+  }
+
+  const handleKakaoLogin = async (profile?: any) => {
     if (isLoading) return
     setIsLoading(true)
 
     try {
-      const token = await KakaoUser.login()
-      if (!token) {
-        throw new Error("Failed to obtain Kakao access token")
+      if (!profile) {
+        const token = await KakaoUser.login()
+        if (!token) {
+          throw new Error("Failed to obtain Kakao access token")
+        }
+        profile = await KakaoUser.me()
       }
 
-      const profile = await KakaoUser.me()
-      if (!profile.email) {
+      if (!profile.id) {
+        throw new Error("카카오 계정 정보를 가져오는데 실패했습니다.")
+      }
+
+      const email = profile.email
+      if (!email) {
         throw new Error("카카오 계정에 이메일이 없습니다. 이메일을 등록해주세요.")
       }
 
-      const uniqueId = `kakao_${profile.id}`
-      const password = `${uniqueId}_fixed_string`
-
-      try {
-        const userCredential = await auth().signInWithEmailAndPassword(profile.email, password)
-        console.log("기존 사용자 로그인 성공")
-
-        const userDoc = await firestore().collection("users").doc(userCredential.user.uid).get()
-        const userData = userDoc.data()
-
-        onLoginSuccess({
-          nickname: userData?.nickname ?? profile.nickname ?? "Unknown",
-          profileImageUrl: userData?.profileImageUrl ?? "",
-        })
-
+      const emailExists = await checkEmailExists(email)
+      if (emailExists) {
+        Alert.alert("계정 존재", "이미 이 이메일로 가입된 계정이 있습니다. 다른 로그인 방식을 시도해주세요.", [
+          { text: "확인", onPress: () => setIsLoading(false) },
+        ])
         return
-      } catch (signInError: any) {
-        if (signInError.code === "auth/user-not-found") {
-          const newUserCredential = await auth().createUserWithEmailAndPassword(profile.email, password)
-          console.log("새 사용자 생성 성공")
-
-          const firebaseImageUrl = await uploadProfileImage(profile.profileImageUrl ?? "", newUserCredential.user.uid)
-          await saveUserToFirestore(newUserCredential.user, profile, firebaseImageUrl)
-
-          onLoginSuccess({
-            nickname: profile.nickname ?? "Unknown",
-            profileImageUrl: firebaseImageUrl,
-          })
-        } else {
-          throw signInError
-        }
       }
+
+      const password = `kakao_${profile.id}_${Date.now()}`
+
+      const userCredential = await auth().createUserWithEmailAndPassword(email, password)
+      console.log("새 사용자 생성 성공")
+
+      const firebaseImageUrl = await uploadProfileImage(profile.profileImageUrl ?? "", userCredential.user.uid)
+      await saveUserToFirestore(userCredential.user, profile, firebaseImageUrl, "kakao")
+
+      onLoginSuccess({
+        nickname: profile.nickname ?? "Unknown",
+        profileImageUrl: firebaseImageUrl,
+      })
     } catch (error: any) {
       console.error("로그인 실패:", error)
       let errorMessage = "로그인 과정에서 오류가 발생했습니다."
 
-      if (error.message === "카카오 계정에 이메일이 없습니다. 이메일을 등록해주세요.") {
+      if (error.message === "카카오 계정 정보를 가져오는데 실패했습니다.") {
         errorMessage = error.message
-      } else if (error.code === "auth/invalid-credential") {
-        errorMessage = "인증 정보가 유효하지 않습니다. 다시 시도해주세요."
+      } else if (error.message === "카카오 계정에 이메일이 없습니다. 이메일을 등록해주세요.") {
+        errorMessage = error.message
       } else if (error.code === "auth/email-already-in-use") {
-        errorMessage = "이미 가입된 이메일입니다. 잠시 후 다시 시도해주세요."
+        errorMessage = "이미 가입된 이메일입니다. 다른 로그인 방식을 시도해주세요."
       }
 
       Alert.alert("로그인 실패", errorMessage)
@@ -162,69 +160,84 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         requestedScopes: [appleAuth.Scope.EMAIL, appleAuth.Scope.FULL_NAME],
       })
 
-      console.log("Apple Auth Response:", appleAuthRequestResponse)
-
       if (!appleAuthRequestResponse.identityToken) {
         throw new Error("Apple Sign-In failed - no identity token returned")
       }
 
       const { identityToken, nonce, fullName, email } = appleAuthRequestResponse
-      const appleCredential = auth.AppleAuthProvider.credential(identityToken, nonce)
 
-      const userCredential = await auth().signInWithCredential(appleCredential)
-      const { user } = userCredential
+      if (!email) {
+        // 이메일을 가져올 수 없는 경우, 기존 사용자일 가능성이 있습니다.
+        // Apple의 ID Token을 사용하여 Firebase에 로그인을 시도합니다.
+        const appleCredential = auth.AppleAuthProvider.credential(identityToken, nonce)
+        const userCredential = await auth().signInWithCredential(appleCredential)
+        const { user } = userCredential
 
-      console.log("Full Name from Apple:", fullName)
-      console.log("User from Firebase:", user)
-
-      const defaultProfileImage = require("../assets/default-profile-image.png")
-
-      // 이름 구성 로직
-      let userName = "Unknown"
-      if (fullName && (fullName.givenName || fullName.familyName)) {
-        userName = `${fullName.givenName || ""} ${fullName.familyName || ""}`.trim()
-      } else {
-        userName = `User_${Math.floor(Math.random() * 10000)}`
+        // Firestore에서 사용자 정보를 가져옵니다.
+        const userDoc = await firestore().collection("users").doc(user.uid).get()
+        if (userDoc.exists) {
+          const userData = userDoc.data()
+          onLoginSuccess({
+            nickname: userData?.nickname || "Unknown",
+            profileImageUrl: userData?.profileImageUrl || require("../assets/default-profile-image.png"),
+          })
+          return
+        } else {
+          throw new Error("Apple 계정에서 이메일을 가져올 수 없고, 기존 계정도 찾을 수 없습니다.")
+        }
       }
 
-      console.log("User name set to:", userName)
+      // 이메일이 있는 경우, 기존 로직을 계속 진행합니다.
+      const emailExists = await checkEmailExists(email)
+      if (emailExists) {
+        // 기존 계정으로 로그인을 시도합니다.
+        const appleCredential = auth.AppleAuthProvider.credential(identityToken, nonce)
+        const userCredential = await auth().signInWithCredential(appleCredential)
+        const { user } = userCredential
 
-      const userDoc = await firestore().collection("users").doc(user.uid).get()
+        const userDoc = await firestore().collection("users").doc(user.uid).get()
+        if (userDoc.exists) {
+          const userData = userDoc.data()
+          onLoginSuccess({
+            nickname: userData?.nickname || "Unknown",
+            profileImageUrl: userData?.profileImageUrl || require("../assets/default-profile-image.png"),
+          })
+        } else {
+          throw new Error("사용자 정보를 찾을 수 없습니다.")
+        }
+      } else {
+        // 새 계정 생성 로직 (기존과 동일)
+        const appleCredential = auth.AppleAuthProvider.credential(identityToken, nonce)
+        const userCredential = await auth().signInWithCredential(appleCredential)
+        const { user } = userCredential
 
-      if (!userDoc.exists) {
+        const defaultProfileImage = require("../assets/default-profile-image.png")
+
+        let userName = "Unknown"
+        if (fullName && (fullName.givenName || fullName.familyName)) {
+          userName = `${fullName.givenName || ""} ${fullName.familyName || ""}`.trim()
+        } else {
+          userName = `User_${Math.floor(Math.random() * 10000)}`
+        }
+
         const userData = {
           uid: user.uid,
-          email: email || user.email,
+          email: email,
           nickname: userName,
           profileImageUrl: user.photoURL || defaultProfileImage,
+          loginType: "apple",
           createdAt: firestore.FieldValue.serverTimestamp(),
         }
         await firestore().collection("users").doc(user.uid).set(userData)
-        console.log("New user data saved to Firestore:", userData)
 
         onLoginSuccess({
           nickname: userName,
           profileImageUrl: user.photoURL || defaultProfileImage,
         })
-      } else {
-        const userData = userDoc.data()
-        // 기존 유저의 경우 저장된 이름을 우선적으로 사용하되, 없으면 새로 생성한 이름 사용
-        const nickname = userData?.nickname || userName
-        await firestore().collection("users").doc(user.uid).update({ nickname })
-        console.log("Existing user data updated in Firestore:", { nickname })
-
-        onLoginSuccess({
-          nickname: nickname,
-          profileImageUrl: userData?.profileImageUrl || user.photoURL || defaultProfileImage,
-        })
       }
-      console.log("Login success, user profile:", {
-        nickname: userName,
-        profileImageUrl: user.photoURL || defaultProfileImage,
-      })
     } catch (error: any) {
       console.error("Apple login failed:", error)
-      Alert.alert("로그인 실패", "Apple 로그인 과정에서 오류가 발생했습니다.")
+      Alert.alert("로그인 실패", "Apple 로그인 과정에서 오류가 발생했습니다. 다시 시도해 주세요.")
     } finally {
       setIsLoading(false)
     }
@@ -237,7 +250,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           <Text style={styles.title1}>로그인하고</Text>
           <Text style={styles.title2}>챌린지에</Text>
           <Text style={styles.title3}>참가하세요</Text>
-          <TouchableOpacity style={styles.kakaoButton} onPress={handleKakaoLogin} disabled={isLoading}>
+          <TouchableOpacity style={styles.kakaoButton} onPress={() => handleKakaoLogin()} disabled={isLoading}>
             {isLoading ? (
               <ActivityIndicator color="#000000" />
             ) : (

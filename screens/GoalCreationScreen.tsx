@@ -95,10 +95,7 @@ export const GoalCreationScreen: React.FC<GoalCreationScreenProps> = ({ navigati
         </TouchableOpacity>
       )}
 
-      <Text style={styles.title}>
-        나, {userProfile.nickname}의{"\n"}
-        {isEditMode ? "목표 수정" : "이번달 목표는"}
-      </Text>
+      <Text style={styles.title}>나의 이번달 목표는</Text>
 
       <TouchableOpacity
         style={[styles.iconInput, { backgroundColor: selectedColor }]}
@@ -152,13 +149,15 @@ export const GoalCreationScreen: React.FC<GoalCreationScreenProps> = ({ navigati
         <Text style={styles.frequencyLabel}>회</Text>
       </View>
 
-      <TouchableOpacity
-        style={[styles.submitButton, !isFormValid && styles.disabledButton]}
-        onPress={handleSubmit}
-        disabled={!isFormValid}
-      >
-        <Text style={styles.submitButtonText}>{isEditMode ? "수정하기" : "추가하기"}</Text>
-      </TouchableOpacity>
+      <View style={styles.submitButtonContainer}>
+        <TouchableOpacity
+          style={[styles.submitButton, !isFormValid && styles.disabledButton]}
+          onPress={handleSubmit}
+          disabled={!isFormValid}
+        >
+          <Text style={styles.submitButtonText}>{isEditMode ? "수정하기" : "추가하기"}</Text>
+        </TouchableOpacity>
+      </View>
 
       <EmojiKeyboard
         isVisible={showEmojiPicker}
@@ -304,6 +303,13 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 17,
     fontWeight: "600",
+  },
+  submitButtonContainer: {
+    position: "absolute",
+    bottom: 30,
+    left: 20,
+    right: 20,
+    marginBottom: 40,
   },
 })
 

@@ -183,7 +183,6 @@ export default function App() {
           const userDoc = await firestore().collection("users").doc(user.uid).get()
           if (userDoc.exists) {
             const userData = userDoc.data()
-            console.log("Fetched user data:", userData)
             setUserProfile({
               nickname: userData?.nickname || user.displayName || "Unknown",
               profileImageUrl:
@@ -205,11 +204,12 @@ export default function App() {
               nickname: newUserData.nickname,
               profileImageUrl: newUserData.profileImageUrl,
             })
+            setHasGoals(false)
           }
-          console.log("User profile set:", userProfile)
         } catch (error) {
           console.error("Error fetching or creating user profile:", error)
           setUserProfile(null)
+          setHasGoals(false)
         } finally {
           await getFCMToken()
         }
@@ -221,7 +221,7 @@ export default function App() {
     })
 
     return () => unsubscribe()
-  }, [checkUserGoals, getFCMToken, userProfile]) // Added userProfile to dependencies
+  }, [checkUserGoals, getFCMToken])
 
   useEffect(() => {
     const unsubscribe = messaging().onMessage(async (remoteMessage) => {
@@ -242,9 +242,12 @@ export default function App() {
     if (currentUser) {
       const userHasGoals = await checkUserGoals(currentUser.uid)
       setHasGoals(userHasGoals)
-      navigationRef.current?.navigate("MainTabs", { userProfile: profile, handleLogout })
+      if (userHasGoals) {
+        navigationRef.current?.navigate("MainTabs", { userProfile: profile, handleLogout })
+      } else {
+        navigationRef.current?.navigate("GoalCreation", { userProfile: profile, isInitialGoal: true })
+      }
     }
-    console.log("App userProfile set:", profile)
   }
 
   const handleLogout = async () => {

@@ -1,7 +1,7 @@
 "use client"
 
 import type React from "react"
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { View, Text, StyleSheet, TouchableOpacity, FlatList, Alert } from "react-native"
 import Modal from "react-native-modal"
 import * as ImagePicker from "expo-image-picker"
@@ -23,8 +23,16 @@ const GoalAndImageSelectionModal: React.FC<GoalAndImageSelectionModalProps> = ({
   const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null)
   const isEmpty = goals.length === 0
 
+  useEffect(() => {
+    if (isVisible) {
+      setSelectedGoal(null)
+    }
+  }, [isVisible])
+
   const handleGoalSelect = (goal: Goal) => {
-    setSelectedGoal(goal)
+    if (goals.some((g) => g.id === goal.id)) {
+      setSelectedGoal(goal)
+    }
   }
 
   const handleImagePick = async () => {
