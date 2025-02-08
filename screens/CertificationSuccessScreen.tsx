@@ -1,20 +1,21 @@
 "use client"
 
 import type React from "react"
-import { useEffect, useState } from "react"
-import { View, Text, StyleSheet, TouchableOpacity, Platform, StatusBar, ActivityIndicator } from "react-native"
+import { useEffect } from "react"
+import { View, Text, StyleSheet, TouchableOpacity, Platform, StatusBar } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
-import type { NativeStackScreenProps } from "@react-navigation/native-stack"
+import type { NativeStackScreenProps, NativeStackNavigationProp } from "@react-navigation/native-stack"
 import type { RootStackParamList } from "../types/navigation"
 import Animated, { useSharedValue, withTiming, useAnimatedProps, Easing } from "react-native-reanimated"
 import * as Haptics from "expo-haptics"
 import Svg, { Circle } from "react-native-svg"
 import { lightenColor } from "../utils/colorUtils"
-import firestore from "@react-native-firebase/firestore"
 
 const AnimatedCircle = Animated.createAnimatedComponent(Circle)
 
-type CertificationSuccessScreenProps = NativeStackScreenProps<RootStackParamList, "CertificationSuccess">
+type CertificationSuccessScreenProps = NativeStackScreenProps<RootStackParamList, "CertificationSuccess"> & {
+  navigation: NativeStackNavigationProp<RootStackParamList, "CertificationSuccess">
+}
 
 const CircularProgress: React.FC<{
   progress: Animated.SharedValue<number>
@@ -49,70 +50,30 @@ const CircularProgress: React.FC<{
 
 export default function CertificationSuccessScreen({ route, navigation }: CertificationSuccessScreenProps) {
   const { goalName, goalColor, goalIcon, goalId, imageUri, goalProgress, goalWeeklyGoal } = route.params
-  const [isUploading, setIsUploading] = useState(true)
+  // const [isUploaded, setIsUploaded] = useState(false)
 
   const animatedProgress = useSharedValue(0)
 
   useEffect(() => {
+    if (Platform.OS === "ios") {
+      const triggerHapticFeedback = async () => {
+        await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Heavy)
+      }
+      triggerHapticFeedback()
+    }
+
     const progressRatio = goalProgress / goalWeeklyGoal
     animatedProgress.value = withTiming(progressRatio, {
       duration: 2000,
       easing: Easing.bezier(0.25, 0.1, 0.25, 1),
     })
+  }, [animatedProgress, goalProgress, goalWeeklyGoal])
 
+  const handleComplete = async () => {
     if (Platform.OS === "ios") {
-      Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success)
+      await Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
     }
-
-    const checkUploadStatus = async () => {
-      try {
-        const certificationRef = firestore()
-          .collection("certifications")
-          .where("goalId", "==", goalId)
-          .orderBy("timestamp", "desc")
-          .limit(1)
-        const unsubscribe = certificationRef.onSnapshot(
-          (snapshot) => {
-            if (snapshot && !snapshot.empty) {
-              const latestCertification = snapshot.docs[0].data()
-              if (latestCertification.imageUrl) {
-                setIsUploading(false)
-                unsubscribe()
-              }
-            }
-          },
-          (error) => {
-            console.error("Error checking upload status:", error)
-            setIsUploading(false)
-          },
-        )
-
-        return unsubscribe
-      } catch (error) {
-        console.error("Error setting up upload status check:", error)
-        setIsUploading(false)
-        return () => {}
-      }
-    }
-
-    const unsubscribePromise = checkUploadStatus()
-    return () => {
-      unsubscribePromise.then((unsubscribe) => {
-        if (typeof unsubscribe === "function") {
-          unsubscribe()
-        }
-      })
-    }
-  }, [animatedProgress, goalProgress, goalWeeklyGoal, goalId])
-
-  const handleComplete = () => {
-    if (Platform.OS === "ios") {
-      Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium)
-    }
-    navigation.reset({
-      index: 0,
-      routes: [{ name: "MainTabs" }],
-    })
+    navigation.goBack()
   }
 
   const backgroundColor = lightenColor(goalColor, 0.8)
@@ -132,11 +93,6 @@ export default function CertificationSuccessScreen({ route, navigation }: Certif
                 <View style={[styles.iconContainer, { backgroundColor: `${goalColor}50` }]}>
                   <Text style={styles.iconText}>{goalIcon}</Text>
                 </View>
-                {isUploading && (
-                  <View style={styles.loadingOverlay}>
-                    <ActivityIndicator size="large" color={goalColor} />
-                  </View>
-                )}
               </View>
               <Text style={styles.progressText}>
                 {goalProgress} / {goalWeeklyGoal}
@@ -219,12 +175,6 @@ const styles = StyleSheet.create({
     fontSize: 18,
     fontWeight: "600",
     textAlign: "center",
-  },
-  loadingOverlay: {
-    ...StyleSheet.absoluteFillObject,
-    backgroundColor: "rgba(255, 255, 255, 0.7)",
-    justifyContent: "center",
-    alignItems: "center",
   },
 })
 

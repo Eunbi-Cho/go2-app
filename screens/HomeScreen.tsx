@@ -198,6 +198,20 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
       const newProgress = selectedGoal.progress + 1
       const progressPercentage = (newProgress / selectedGoal.weeklyGoal) * 100
 
+      // Navigate to CertificationSuccessScreen immediately
+      navigation.push("CertificationSuccess", {
+        goalName: selectedGoal.name,
+        goalColor: selectedGoal.color,
+        goalIcon: selectedGoal.icon || undefined,
+        imageUri: imageUri,
+        goalId: goalId,
+        goalProgress: newProgress,
+        goalWeeklyGoal: selectedGoal.weeklyGoal,
+      })
+
+      // Continue upload process in the background
+      const imageUrl = await uploadImage(imageUri)
+
       // Update goal progress and days
       const goalRef = firestore().collection("goals").doc(goalId)
       await firestore().runTransaction(async (transaction) => {
@@ -231,24 +245,6 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
           lastResetDate: currentDate,
         })
       })
-
-      // Fetch updated goal data
-      const updatedGoalDoc = await firestore().collection("goals").doc(goalId).get()
-      const updatedGoalData = updatedGoalDoc.data() as Goal
-
-      // Navigate to CertificationSuccessScreen immediately
-      navigation.navigate("CertificationSuccess", {
-        goalName: selectedGoal.name,
-        goalColor: selectedGoal.color,
-        goalIcon: selectedGoal.icon || undefined,
-        imageUri: imageUri,
-        goalId: goalId,
-        goalProgress: updatedGoalData.progress,
-        goalWeeklyGoal: updatedGoalData.weeklyGoal,
-      })
-
-      // Upload image in the background
-      const imageUrl = await uploadImage(imageUri)
 
       // Save certification data after image upload
       const newCertification: Omit<Certification, "id"> = {
