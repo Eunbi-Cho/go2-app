@@ -12,13 +12,12 @@ import { initializeKakaoSDK } from "@react-native-kakao/core"
 import * as Font from "expo-font"
 import * as SplashScreen from "expo-splash-screen"
 import type { RootStackParamList, MainTabsParamList, UserProfile } from "./types/navigation"
-import { StyleSheet, View } from "react-native"
+import { StyleSheet, View, TouchableOpacity } from "react-native"
 import type React from "react"
 import auth from "@react-native-firebase/auth"
 import firestore from "@react-native-firebase/firestore"
 import messaging from "@react-native-firebase/messaging"
 import * as KakaoUser from "@react-native-kakao/user"
-import { appleAuth } from "@invertase/react-native-apple-authentication"
 
 import LoginScreen from "./screens/LoginScreen"
 import HomeScreen from "./screens/HomeScreen"
@@ -27,6 +26,7 @@ import ProfileScreen from "./screens/ProfileScreen"
 import GoalCreationScreen from "./screens/GoalCreationScreen"
 import FriendProfileScreen from "./screens/FriendProfileScreen"
 import CertificationSuccessScreen from "./screens/CertificationSuccessScreen"
+import SettingsScreen from "./screens/SettingsScreen"
 
 const Tab = createBottomTabNavigator<MainTabsParamList>()
 const Stack = createNativeStackNavigator<RootStackParamList>()
@@ -183,13 +183,20 @@ export default function App() {
           const userDoc = await firestore().collection("users").doc(user.uid).get()
           if (userDoc.exists) {
             const userData = userDoc.data()
-            setUserProfile({
+            const profile = {
               nickname: userData?.nickname || user.displayName || "Unknown",
               profileImageUrl:
                 userData?.profileImageUrl || user.photoURL || require("./assets/default-profile-image.png"),
-            })
+            }
+            setUserProfile(profile)
             const userHasGoals = await checkUserGoals(user.uid)
             setHasGoals(userHasGoals)
+
+            if (userHasGoals) {
+              navigationRef.current?.navigate("MainTabs")
+            } else {
+              navigationRef.current?.navigate("GoalCreation", { userProfile: profile, isInitialGoal: true })
+            }
           } else {
             console.log("User document does not exist in Firestore, creating new document")
             const newUserData = {
@@ -214,9 +221,15 @@ export default function App() {
           await getFCMToken()
         }
       } else {
+        // 사용자가 로그아웃 상태일 때
         setIsLoggedIn(false)
         setUserProfile(null)
         setHasGoals(false)
+        // 로그인 화면으로 이동
+        navigationRef.current?.reset({
+          index: 0,
+          routes: [{ name: "Login" }],
+        })
       }
     })
 
@@ -235,22 +248,25 @@ export default function App() {
     console.log("Background Message received:", remoteMessage)
   })
 
-  const handleLoginSuccess = async (profile: UserProfile) => {
-    setIsLoggedIn(true)
-    setUserProfile(profile)
-    const currentUser = auth().currentUser
-    if (currentUser) {
-      const userHasGoals = await checkUserGoals(currentUser.uid)
-      setHasGoals(userHasGoals)
-      if (userHasGoals) {
-        navigationRef.current?.navigate("MainTabs", { userProfile: profile, handleLogout })
-      } else {
-        navigationRef.current?.navigate("GoalCreation", { userProfile: profile, isInitialGoal: true })
+  const handleLoginSuccess = useCallback(
+    async (profile: UserProfile) => {
+      setIsLoggedIn(true)
+      setUserProfile(profile)
+      const currentUser = auth().currentUser
+      if (currentUser) {
+        const userHasGoals = await checkUserGoals(currentUser.uid)
+        setHasGoals(userHasGoals)
+        if (userHasGoals) {
+          navigationRef.current?.navigate("MainTabs")
+        } else {
+          navigationRef.current?.navigate("GoalCreation", { userProfile: profile, isInitialGoal: true })
+        }
       }
-    }
-  }
+    },
+    [checkUserGoals],
+  )
 
-  const handleLogout = async () => {
+  const handleLogout = useCallback(async () => {
     console.log("Starting logout process...")
     try {
       // Kakao 로그아웃 시도
@@ -264,36 +280,25 @@ export default function App() {
         console.log("Not logged in with Kakao")
       }
 
-      // Apple 로그아웃 시도
-      if (appleAuth.isSupported) {
-        try {
-          const user = auth().currentUser
-          if (user?.providerData[0]?.providerId === "apple.com") {
-            await appleAuth.performRequest({
-              requestedOperation: appleAuth.Operation.LOGOUT,
-            })
-            console.log("Apple logout successful")
-          }
-        } catch (appleError) {
-          console.log("Apple logout skipped")
-        }
-      }
-
       // Firebase 로그아웃
-      const user = auth().currentUser
-      if (user) {
-        await auth().signOut()
-        console.log("Firebase logout successful")
-      }
+      await auth().signOut()
+      console.log("Firebase logout successful")
+
+      // 모든 로그아웃 시도 후 앱 상태 업데이트
+      setIsLoggedIn(false)
+      setUserProfile(null)
+      setHasGoals(false)
+      console.log("App state updated after logout")
+
+      // 로그아웃 후 즉시 로그인 화면으로 이동
+      navigationRef.current?.reset({
+        index: 0,
+        routes: [{ name: "Login" }],
+      })
     } catch (error) {
       console.error("Logout error:", error)
     }
-    // 모든 로그아웃 시도 후 앱 상태 업데이트
-    setIsLoggedIn(false)
-    setUserProfile(null)
-    setHasGoals(false)
-    console.log("App state updated after logout")
-  }
+  }, [])
 
   const updateUserProfile = (newProfile: UserProfile) => {
     setUserProfile(newProfile)
@@ -314,30 +319,39 @@ export default function App() {
       <SafeAreaProvider style={{ backgroundColor: "#f8f8f8" }}>
         <NavigationContainer ref={navigationRef}>
           <Stack.Navigator screenOptions={{ headerShown: false }}>
-            {!isLoggedIn ? (
-              <Stack.Screen name="Login">
-                {(props) => <LoginScreen {...props} onLoginSuccess={handleLoginSuccess} />}
-              </Stack.Screen>
-            ) : (
-              <>
-                <Stack.Screen name="MainTabs">
-                  {() => (
-                    <MainTabs
-                      userProfile={userProfile!}
-                      handleLogout={handleLogout}
-                      updateUserProfile={updateUserProfile}
-                    />
-                  )}
-                </Stack.Screen>
-                <Stack.Screen
-                  name="GoalCreation"
-                  component={GoalCreationScreen}
-                  initialParams={{ userProfile: userProfile!, isInitialGoal: !hasGoals }}
+            <Stack.Screen name="Login">
+              {(props) => <LoginScreen {...props} onLoginSuccess={handleLoginSuccess} />}
+            </Stack.Screen>
+            <Stack.Screen name="MainTabs">
+              {() => (
+                <MainTabs
+                  userProfile={userProfile!}
+                  handleLogout={handleLogout}
+                  updateUserProfile={updateUserProfile}
                 />
-                <Stack.Screen name="FriendProfile" component={FriendProfileScreen} />
-                <Stack.Screen name="CertificationSuccess" component={CertificationSuccessScreen} />
-              </>
-            )}
+              )}
+            </Stack.Screen>
+            <Stack.Screen
+              name="GoalCreation"
+              component={GoalCreationScreen}
+              initialParams={{ userProfile: userProfile || undefined, isInitialGoal: !hasGoals }}
+            />
+            <Stack.Screen name="FriendProfile" component={FriendProfileScreen} />
+            <Stack.Screen name="CertificationSuccess" component={CertificationSuccessScreen} />
+            <Stack.Screen
+              name="Settings"
+              options={{
+                headerShown: true,
+                title: "설정",
+                headerLeft: () => (
+                  <TouchableOpacity onPress={() => navigationRef.current?.goBack()}>
+                    <Ionicons name="arrow-back" size={24} color="#000000" />
+                  </TouchableOpacity>
+                ),
+              }}
+            >
+              {(props) => <SettingsScreen {...props} handleLogout={handleLogout} />}
+            </Stack.Screen>
           </Stack.Navigator>
         </NavigationContainer>
       </SafeAreaProvider>

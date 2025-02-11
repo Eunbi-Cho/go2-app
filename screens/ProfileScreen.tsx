@@ -24,7 +24,6 @@ import { useFocusEffect } from "@react-navigation/native"
 import firestore from "@react-native-firebase/firestore"
 import auth from "@react-native-firebase/auth"
 import storage from "@react-native-firebase/storage"
-import * as KakaoUser from "@react-native-kakao/user"
 import { Ionicons } from "@expo/vector-icons"
 import type { Goal } from "../types/goal"
 import CircularProgress from "../components/CircularProgress"
@@ -50,7 +49,6 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
 }) => {
   const [goals, setGoals] = useState<Goal[]>([])
   const MAX_GOALS = 4
-  // const [isLoading, setIsLoading] = useState(true) //Removed
   const [refreshing, setRefreshing] = useState(false)
   const [showAndroidModal, setShowAndroidModal] = useState(false)
   const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null)
@@ -79,39 +77,6 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
     fetchUserProfile()
   }, [])
 
-  const handleLogoutPress = () => {
-    Alert.alert("로그아웃", "정말 로그아웃 하시겠습니까?", [
-      {
-        text: "취소",
-        style: "cancel",
-      },
-      {
-        text: "로그아웃",
-        style: "destructive",
-        onPress: async () => {
-          try {
-            const user = auth().currentUser
-            if (user) {
-              try {
-                const isKakaoLoggedIn = await KakaoUser.getAccessToken()
-                if (isKakaoLoggedIn) {
-                  await KakaoUser.logout()
-                }
-              } catch (error) {
-                console.log("Kakao logout skipped")
-              }
-              await auth().signOut()
-            }
-            handleLogout()
-          } catch (error) {
-            console.error("로그아웃 중 오류 발생:", error)
-            Alert.alert("오류", "로그아웃 중 문제가 발생했습니다. 다시 시도해 주세요.")
-          }
-        },
-      },
-    ])
-  }
-
   const fetchGoals = useCallback(async () => {
     try {
       const currentUser = auth().currentUser
@@ -138,7 +103,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
           if (!data.lastResetDate || new Date(data.lastResetDate) < currentWeekStart) {
             updatedData = {
               ...updatedData,
-              progress: 0,
+              progress: 0, // 주간 진행 상황 리셋
               days: Array(7).fill(false),
               lastResetDate: currentDate,
             }
@@ -179,6 +144,8 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
           .get()
 
         const weekCerts: { [goalId: string]: { [day: number]: boolean } } = {}
+        const progressCount: { [goalId: string]: number } = {}
+
         certifications.docs.forEach((doc) => {
           const certData = doc.data()
           const certDate = certData.timestamp.toDate()
@@ -187,18 +154,32 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
           if (!weekCerts[goalId]) {
             weekCerts[goalId] = {}
+            progressCount[goalId] = 0
           }
           weekCerts[goalId][dayIndex] = true
+          progressCount[goalId]++
         })
 
         setWeekCertifications(weekCerts)
+
+        // 각 목표의 progress를 업데이트
+        const goalUpdates = goalsData.map(async (goal) => {
+          const newProgress = progressCount[goal.id] || 0
+          if (goal.progress !== newProgress) {
+            await firestore().collection("goals").doc(goal.id).update({ progress: newProgress })
+            return { ...goal, progress: newProgress }
+          }
+          return goal
+        })
+
+        const updatedGoals = await Promise.all(goalUpdates)
+        setGoals(sortGoalsByAchievementRate(updatedGoals))
       }
 
       await fetchWeekCertifications(currentUser.uid)
     } catch (error) {
       console.error("Error fetching goals and certifications:", error)
     } finally {
-      //setIsLoading(false) //Removed
       setRefreshing(false)
     }
   }, [])
@@ -345,8 +326,8 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
 
   return (
     <SafeAreaView style={styles.container}>
-      <TouchableOpacity style={styles.logoutButton} onPress={handleLogoutPress}>
-        <Ionicons name="log-out-outline" size={24} color="#767676" />
+      <TouchableOpacity style={styles.moreButton} onPress={() => navigation.navigate("Settings")}>
+        <Ionicons name="ellipsis-horizontal" size={24} color="#767676" />
       </TouchableOpacity>
       <ScrollView
         contentContainerStyle={styles.scrollContent}
@@ -719,7 +700,7 @@ const styles = StyleSheet.create({
   deleteOptionText: {
     color: "#f4583f",
   },
-  logoutButton: {
+  moreButton: {
     position: "absolute",
     top: 80,
     right: 20,

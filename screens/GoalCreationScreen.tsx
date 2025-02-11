@@ -15,7 +15,10 @@ type GoalCreationScreenProps = NativeStackScreenProps<RootStackParamList, "GoalC
 
 const COLORS = ["#f4583f", "#ffa8b0", "#ffa14a", "#fece51", "#48b86e", "#80daff", "#387aff"]
 
-export const GoalCreationScreen: React.FC<GoalCreationScreenProps> = ({ navigation, route }) => {
+export const GoalCreationScreen: React.FC<NativeStackScreenProps<RootStackParamList, "GoalCreation">> = ({
+  navigation,
+  route,
+}) => {
   const { userProfile, goal, isInitialGoal } = route.params
   const [icon, setIcon] = useState(goal?.icon || "")
   const [selectedColor, setSelectedColor] = useState(goal?.color || COLORS[0])
@@ -181,7 +184,7 @@ const styles = StyleSheet.create({
   backButton: {
     position: "absolute",
     left: 20,
-    top: 60,
+    top: 80,
     zIndex: 1,
   },
   title: {
@@ -309,7 +312,6 @@ const styles = StyleSheet.create({
     bottom: 30,
     left: 20,
     right: 20,
-    marginBottom: 40,
   },
 })
 

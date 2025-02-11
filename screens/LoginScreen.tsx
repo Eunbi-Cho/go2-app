@@ -127,6 +127,16 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           profileImageUrl: userData?.profileImageUrl || require("../assets/default-profile-image.png"),
         })
       } else {
+        // Firestore에 사용자가 없지만 Firebase Auth에 있을 경우 삭제
+        try {
+          const existingUser = await auth().signInWithEmailAndPassword(email, `kakao_${profile.id}`)
+          if (existingUser.user) {
+            await existingUser.user.delete()
+          }
+        } catch (error) {
+          // 사용자가 없거나 로그인 실패 시 무시
+        }
+
         // 새 사용자 생성
         const userCredential = await auth().createUserWithEmailAndPassword(email, `kakao_${profile.id}`)
         console.log("새 사용자 생성 성공")
@@ -171,55 +181,33 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         throw new Error("Apple Sign-In failed - no identity token returned")
       }
 
-      const { identityToken, nonce, fullName, email } = appleAuthRequestResponse
+      const { identityToken, nonce, fullName } = appleAuthRequestResponse
+      const appleCredential = auth.AppleAuthProvider.credential(identityToken, nonce)
 
-      if (!email) {
-        // 이메일을 가져올 수 없는 경우, 기존 사용자일 가능성이 있습니다.
-        // Apple의 ID Token을 사용하여 Firebase에 로그인을 시도합니다.
-        const appleCredential = auth.AppleAuthProvider.credential(identityToken, nonce)
-        const userCredential = await auth().signInWithCredential(appleCredential)
-        const { user } = userCredential
+      let userCredential
+      try {
+        userCredential = await auth().signInWithCredential(appleCredential)
+      } catch (error) {
+        if (error instanceof Error && error.message.includes("user-not-found")) {
+          // Generate a random password for the new user
+          const randomPassword = Math.random().toString(36).slice(-8)
 
-        // Firestore에서 사용자 정보를 가져옵니다.
-        const userDoc = await firestore().collection("users").doc(user.uid).get()
-        if (userDoc.exists) {
-          const userData = userDoc.data()
-          onLoginSuccess({
-            nickname: userData?.nickname || "Unknown",
-            profileImageUrl: userData?.profileImageUrl || require("../assets/default-profile-image.png"),
-          })
-          return
+          // Create a new user with the Apple ID as email and the random password
+          userCredential = await auth().createUserWithEmailAndPassword(
+            appleAuthRequestResponse.email || `${appleAuthRequestResponse.user}@apple.com`,
+            randomPassword,
+          )
         } else {
-          throw new Error("Apple 계정에서 이메일을 가져올 수 없고, 기존 계정도 찾을 수 없습니다.")
+          throw error
         }
       }
 
-      // 이메일이 있는 경우, 기존 로직을 계속 진행합니다.
-      const userExists = await checkUserExists(email, "apple")
-      if (userExists) {
-        // 기존 Apple 사용자로 로그인
-        const appleCredential = auth.AppleAuthProvider.credential(identityToken, nonce)
-        const userCredential = await auth().signInWithCredential(appleCredential)
-        const { user } = userCredential
+      const { user } = userCredential
+      let userDoc = await firestore().collection("users").doc(user.uid).get()
 
-        const userDoc = await firestore().collection("users").doc(user.uid).get()
-        if (userDoc.exists) {
-          const userData = userDoc.data()
-          onLoginSuccess({
-            nickname: userData?.nickname || "Unknown",
-            profileImageUrl: userData?.profileImageUrl || require("../assets/default-profile-image.png"),
-          })
-        } else {
-          throw new Error("사용자 정보를 찾을 수 없습니다.")
-        }
-      } else {
-        // 새 계정 생성 로직
-        const appleCredential = auth.AppleAuthProvider.credential(identityToken, nonce)
-        const userCredential = await auth().signInWithCredential(appleCredential)
-        const { user } = userCredential
-
+      if (!userDoc.exists) {
+        // 새 사용자 생성
         const defaultProfileImage = require("../assets/default-profile-image.png")
-
         let userName = "Unknown"
         if (fullName && (fullName.givenName || fullName.familyName)) {
           userName = `${fullName.givenName || ""} ${fullName.familyName || ""}`.trim()
@@ -229,20 +217,22 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
 
         const userData = {
           uid: user.uid,
-          email: email,
+          email: user.email,
           nickname: userName,
           profileImageUrl: user.photoURL || defaultProfileImage,
           loginType: "apple",
           createdAt: firestore.FieldValue.serverTimestamp(),
         }
         await firestore().collection("users").doc(user.uid).set(userData)
-
-        onLoginSuccess({
-          nickname: userName,
-          profileImageUrl: user.photoURL || defaultProfileImage,
-        })
+        userDoc = await firestore().collection("users").doc(user.uid).get()
       }
-    } catch (error: any) {
+
+      const userData = userDoc.data()
+      onLoginSuccess({
+        nickname: userData?.nickname || "Unknown",
+        profileImageUrl: userData?.profileImageUrl || require("../assets/default-profile-image.png"),
+      })
+    } catch (error: unknown) {
       console.error("Apple login failed:", error)
       Alert.alert("로그인 실패", "Apple 로그인 과정에서 오류가 발생했습니다. 다시 시도해 주세요.")
     } finally {

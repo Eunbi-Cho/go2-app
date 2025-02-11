@@ -87,6 +87,8 @@ const FriendProfileScreen: React.FC<FriendProfileScreenProps> = ({ route }) => {
           .get()
 
         const weekCerts: { [goalId: string]: { [day: number]: boolean } } = {}
+        const progressCount: { [goalId: string]: number } = {}
+
         certifications.docs.forEach((doc) => {
           const certData = doc.data()
           const certDate = certData.timestamp.toDate()
@@ -95,11 +97,21 @@ const FriendProfileScreen: React.FC<FriendProfileScreenProps> = ({ route }) => {
 
           if (!weekCerts[goalId]) {
             weekCerts[goalId] = {}
+            progressCount[goalId] = 0
           }
           weekCerts[goalId][dayIndex] = true
+          progressCount[goalId]++
         })
 
         setWeekCertifications(weekCerts)
+
+        // 각 목표의 progress를 업데이트
+        const updatedGoals = goalsData.map((goal) => ({
+          ...goal,
+          progress: progressCount[goal.id] || 0,
+        }))
+
+        setGoals(sortGoalsByAchievementRate(updatedGoals))
       }
 
       await fetchWeekCertifications(userId)

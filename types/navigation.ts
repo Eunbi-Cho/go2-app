@@ -17,7 +17,7 @@ export type MainTabsParamList = {
 export type RootStackParamList = {
   Login: undefined
   MainTabs: { userProfile: UserProfile; handleLogout: () => void } | undefined
-  GoalCreation: { userProfile: UserProfile; goal?: Goal; isInitialGoal: boolean }
+  GoalCreation: { userProfile?: UserProfile; goal?: Goal; isInitialGoal: boolean }
   FriendProfile: { userId: string }
   CertificationSuccess: {
     goalName: string
@@ -28,6 +28,7 @@ export type RootStackParamList = {
     goalProgress: number
     goalWeeklyGoal: number
   }
+  Settings: undefined
 }
 
 export type RootStackNavigationProp = NativeStackNavigationProp<RootStackParamList>

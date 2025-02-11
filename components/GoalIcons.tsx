@@ -5,7 +5,7 @@ import CircularProgress from "./CircularProgress"
 import { lightenColor } from "../utils/colorUtils"
 
 interface GoalIconsProps {
-  goals: Goal[]
+  goals: (Goal & { weeklyProgress?: number })[]
   size?: number
   lightColor?: boolean
 }
@@ -14,7 +14,7 @@ const GoalIcons: React.FC<GoalIconsProps> = ({ goals, size = 24, lightColor = fa
   return (
     <View style={styles.container}>
       {goals.map((goal, index) => {
-        const progress = (goal.progress / goal.weeklyGoal) * 100
+        const progress = goal.weeklyProgress !== undefined ? (goal.weeklyProgress / goal.weeklyGoal) * 100 : 0
         const backgroundColor = lightColor ? lightenColor(goal.color, 0.6) : goal.color
         return (
           <View

@@ -49,9 +49,6 @@ export default function ChallengeScreen() {
 
     const totalProgress = userGoals.reduce((sum, goal) => {
       const progressPercentage = (goal.progress / goal.weeklyGoal) * 100
-      console.log(
-        `Goal ${goal.id}: progress=${goal.progress}, weeklyGoal=${goal.weeklyGoal}, percentage=${progressPercentage}%`,
-      )
       return sum + progressPercentage
     }, 0)
 
@@ -66,10 +63,11 @@ export default function ChallengeScreen() {
       return prevMembers.map((member) => {
         const memberGoals = goals[member.userId] || []
         console.log(`Calculating progress for member ${member.name}`)
-        const progress = calculateTotalProgress(memberGoals)
+        const monthlyProgress = calculateTotalProgress(memberGoals)
         return {
           ...member,
-          totalProgress: progress,
+          totalProgress: monthlyProgress,
+          goals: memberGoals,
         }
       })
     })
@@ -181,12 +179,12 @@ export default function ChallengeScreen() {
 
   useEffect(() => {
     calculateDaysLeft()
-  }, []) // Removed unnecessary dependency: currentMonth
+  }, [])
 
   useFocusEffect(
     useCallback(() => {
       fetchChallengeGroup()
-    }, []),
+    }, [fetchChallengeGroup]), // Added fetchChallengeGroup to dependencies
   )
 
   const calculateDaysLeft = () => {
@@ -303,7 +301,6 @@ export default function ChallengeScreen() {
     }
   }, [userChallengeGroup, currentYear, currentMonth, members])
 
-  // Save challenge history on the last day of the month
   useEffect(() => {
     const now = new Date()
     const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
