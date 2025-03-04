@@ -73,20 +73,23 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
       const filteredUserData = Object.fromEntries(Object.entries(userData).filter(([_, value]) => value !== undefined))
 
       await firestore().collection("users").doc(user.uid).set(filteredUserData, { merge: true })
+      console.log("User data saved to Firestore successfully")
     } catch (error) {
       console.error("Error saving user to Firestore:", error)
-      throw error
+      // 여기서는 에러를 throw하지 않고 로깅만 합니다.
+      // 사용자 데이터 저장 실패가 로그인 자체를 실패시키지 않도록 합니다.
     }
   }
 
   const checkUserExists = async (email: string, loginType: string): Promise<boolean> => {
     try {
-      const userSnapshot = await firestore().collection("users").where("email", "==", email).get()
-      if (userSnapshot.empty) {
+      // 먼저 Firebase Auth에서 이메일로 로그인 시도
+      try {
+        await auth().signInWithEmailAndPassword(email, `${loginType}_${email}`)
+        return true
+      } catch (error) {
         return false
       }
-      const userData = userSnapshot.docs[0].data()
-      return userData.loginType === loginType
     } catch (error) {
       console.error("Error checking user existence:", error)
       return false
@@ -115,29 +118,48 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         throw new Error("카카오 계정에 이메일이 없습니다. 이메일을 등록해주세요.")
       }
 
-      const userExists = await checkUserExists(email, "kakao")
-      if (userExists) {
-        // 기존 Kakao 사용자로 로그인
+      // 먼저 Firebase Auth에서 이메일로 로그인 시도
+      try {
+        // 기존 계정으로 로그인 시도
         const userCredential = await auth().signInWithEmailAndPassword(email, `kakao_${profile.id}`)
         const user = userCredential.user
-        const userDoc = await firestore().collection("users").doc(user.uid).get()
-        const userData = userDoc.data()
-        onLoginSuccess({
-          nickname: userData?.nickname || "Unknown",
-          profileImageUrl: userData?.profileImageUrl || require("../assets/default-profile-image.png"),
-        })
-      } else {
-        // Firestore에 사용자가 없지만 Firebase Auth에 있을 경우 삭제
+
+        // 로그인 성공 시 사용자 정보 가져오기
         try {
-          const existingUser = await auth().signInWithEmailAndPassword(email, `kakao_${profile.id}`)
-          if (existingUser.user) {
-            await existingUser.user.delete()
+          const userDoc = await firestore().collection("users").doc(user.uid).get()
+          if (userDoc.exists) {
+            const userData = userDoc.data()
+            onLoginSuccess({
+              nickname: userData?.nickname || "Unknown",
+              profileImageUrl: userData?.profileImageUrl || require("../assets/default-profile-image.png"),
+            })
+          } else {
+            // 사용자 문서가 없으면 생성
+            const firebaseImageUrl = await uploadProfileImage(profile.profileImageUrl ?? "", user.uid)
+            await saveUserToFirestore(user, profile, firebaseImageUrl, "kakao")
+
+            onLoginSuccess({
+              nickname: profile.nickname ?? "Unknown",
+              profileImageUrl: firebaseImageUrl,
+            })
           }
         } catch (error) {
-          // 사용자가 없거나 로그인 실패 시 무시
+          console.error("Error fetching user data:", error)
+          // 오류가 발생해도 로그인은 성공했으므로 기본 정보로 진행
+          onLoginSuccess({
+            nickname: profile.nickname ?? "Unknown",
+            profileImageUrl: profile.profileImageUrl ?? require("../assets/default-profile-image.png"),
+          })
         }
 
-        // 새 사용자 생성
+        return
+      } catch (loginError) {
+        // 로그인 실패 시 새 계정 생성 시도
+        console.log("Login failed, trying to create a new account")
+      }
+
+      // 새 계정 생성
+      try {
         const userCredential = await auth().createUserWithEmailAndPassword(email, `kakao_${profile.id}`)
         console.log("새 사용자 생성 성공")
 
@@ -148,6 +170,13 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           nickname: profile.nickname ?? "Unknown",
           profileImageUrl: firebaseImageUrl,
         })
+      } catch (createError: any) {
+        if (createError.code === "auth/email-already-in-use") {
+          // 이메일이 이미 사용 중이지만 카카오 계정이 아닌 경우
+          Alert.alert("로그인 실패", "이미 다른 방식으로 가입된 이메일입니다. 다른 로그인 방식을 시도해주세요.")
+        } else {
+          throw createError
+        }
       }
     } catch (error: any) {
       console.error("로그인 실패:", error)
@@ -157,8 +186,6 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         errorMessage = error.message
       } else if (error.message === "카카오 계정에 이메일이 없습니다. 이메일을 등록해주세요.") {
         errorMessage = error.message
-      } else if (error.code === "auth/email-already-in-use") {
-        errorMessage = "이미 다른 방식으로 가입된 이메일입니다. 다른 로그인 방식을 시도해주세요."
       }
 
       Alert.alert("로그인 실패", errorMessage)
