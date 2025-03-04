@@ -61,103 +61,123 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
   }, [])
 
   const fetchCertifications = useCallback(async (userGoals: Goal[] = []) => {
-    const currentUser = auth().currentUser
-    if (!currentUser) {
-      console.log("No authenticated user")
-      return
-    }
+    setIsLoading(true)
+    try {
+      const currentUser = auth().currentUser
+      if (!currentUser) {
+        console.log("No authenticated user")
+        setIsLoading(false)
+        return
+      }
 
-    const today = new Date()
-    today.setHours(0, 0, 0, 0)
-    const tomorrow = new Date(today)
-    tomorrow.setDate(tomorrow.getDate() + 1)
+      const today = new Date()
+      today.setHours(0, 0, 0, 0)
+      const tomorrow = new Date(today)
+      tomorrow.setDate(tomorrow.getDate() + 1)
 
-    console.log("Fetching certifications for date range:", today, "to", tomorrow)
+      console.log("Fetching certifications for date range:", today, "to", tomorrow)
 
-    // Fetch user's challenge group
-    const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
-    const userData = userDoc.data()
-    const groupId = userData?.challengeGroupId
-    setUserChallengeGroup(groupId)
+      // Fetch user's challenge group
+      const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
+      const userData = userDoc.data()
+      const groupId = userData?.challengeGroupId
+      setUserChallengeGroup(groupId)
 
-    // 현재 사용자 정보 로드
-    const currentUserDoc = await firestore().collection("users").doc(currentUser.uid).get()
-    if (currentUserDoc.exists) {
-      const currentUserData = { id: currentUser.uid, ...currentUserDoc.data() } as User
-      setCurrentUser(currentUserData)
-      setUsers((prevUsers) => ({ ...prevUsers, [currentUser.uid]: currentUserData }))
-    }
+      // 현재 사용자 정보 로드
+      const currentUserDoc = await firestore().collection("users").doc(currentUser.uid).get()
+      if (currentUserDoc.exists) {
+        const currentUserData = { id: currentUser.uid, ...currentUserDoc.data() } as User
+        setCurrentUser(currentUserData)
+        setUsers((prevUsers) => ({ ...prevUsers, [currentUser.uid]: currentUserData }))
+      }
 
-    let certificationsQuery = firestore()
-      .collection("certifications")
-      .where("timestamp", ">=", today)
-      .where("timestamp", "<", tomorrow)
-      .orderBy("timestamp", "desc")
+      let certificationsQuery = firestore()
+        .collection("certifications")
+        .where("timestamp", ">=", today)
+        .where("timestamp", "<", tomorrow)
+        .orderBy("timestamp", "desc")
 
-    let memberIds: string[] = [currentUser.uid]
+      let memberIds: string[] = [currentUser.uid]
 
-    if (groupId) {
-      console.log("User's challenge group ID:", groupId)
-      // Fetch group members
-      const membersSnapshot = await firestore().collection("users").where("challengeGroupId", "==", groupId).get()
-      memberIds = membersSnapshot.docs.map((doc) => doc.id)
-      console.log("Group member IDs:", memberIds)
+      if (groupId) {
+        console.log("User's challenge group ID:", groupId)
+        // Fetch group members
+        const membersSnapshot = await firestore().collection("users").where("challengeGroupId", "==", groupId).get()
+        memberIds = membersSnapshot.docs.map((doc) => doc.id)
+        console.log("Group member IDs:", memberIds)
 
-      certificationsQuery = certificationsQuery.where("userId", "in", memberIds)
+        if (memberIds.length > 0) {
+          certificationsQuery = certificationsQuery.where("userId", "in", memberIds)
+        } else {
+          console.log("No members found in the group")
+          certificationsQuery = certificationsQuery.where("userId", "==", currentUser.uid)
+        }
 
-      // Fetch users data
-      const usersData: { [key: string]: User } = {}
-      await Promise.all(
-        memberIds.map(async (userId) => {
-          const userDoc = await firestore().collection("users").doc(userId).get()
-          if (userDoc.exists) {
-            const userData = userDoc.data()
-            usersData[userId] = {
-              id: userId,
-              ...userData,
-              profileImageUrl: userData?.profileImageUrl || null,
-            } as User
+        // Fetch users data
+        const usersData: { [key: string]: User } = {}
+        await Promise.all(
+          memberIds.map(async (userId) => {
+            const userDoc = await firestore().collection("users").doc(userId).get()
+            if (userDoc.exists) {
+              const userData = userDoc.data()
+              usersData[userId] = {
+                id: userId,
+                ...userData,
+                profileImageUrl: userData?.profileImageUrl || null,
+              } as User
+            }
+          }),
+        )
+        setUsers(usersData)
+        console.log("Updated users data:", usersData)
+      } else {
+        console.log("User is not in a challenge group")
+        certificationsQuery = certificationsQuery.where("userId", "==", currentUser.uid)
+      }
+
+      const certificationsSnapshot = await certificationsQuery.get()
+      console.log("Certifications found:", certificationsSnapshot.size)
+
+      // Fetch group members' goals
+      const groupGoals: { [userId: string]: Goal[] } = {}
+
+      if (memberIds.length > 0) {
+        const groupGoalsSnapshot = await firestore().collection("goals").where("userId", "in", memberIds).get()
+        groupGoalsSnapshot.docs.forEach((doc) => {
+          const goal = { id: doc.id, ...doc.data() } as Goal
+          if (!groupGoals[goal.userId]) {
+            groupGoals[goal.userId] = []
           }
-        }),
-      )
-      setUsers(usersData)
-      console.log("Updated users data:", usersData)
-    } else {
-      console.log("User is not in a challenge group")
-      certificationsQuery = certificationsQuery.where("userId", "==", currentUser.uid)
+          groupGoals[goal.userId].push(goal)
+        })
+      }
+      setGroupGoals(groupGoals)
+
+      const certificationsData = certificationsSnapshot.docs.map((doc) => ({
+        id: doc.id,
+        ...doc.data(),
+      })) as Certification[]
+
+      // 현재 사용자의 인증샷 중 삭제된 목표의 인증샷을 필터링합니다.
+      const filteredCertifications = certificationsData.filter((cert) => {
+        if (cert.userId === currentUser.uid) {
+          // 현재 사용자의 인증샷인 경우, 해당 목표가 존재하는지 확인
+          return userGoals.some((goal) => goal.id === cert.goalId)
+        }
+        // 다른 사용자의 인증샷은 해당 사용자의 현재 목표와 일치하는지 확인
+        return groupGoals[cert.userId]?.some((goal) => goal.id === cert.goalId)
+      })
+
+      console.log("Filtered certifications:", filteredCertifications.length)
+      setUserCertifications(filteredCertifications)
+    } catch (error) {
+      console.error("Error fetching certifications:", error)
+      // 오류 발생 시 빈 배열로 설정
+      setUserCertifications([])
+    } finally {
+      // 항상 로딩 상태 종료
+      setIsLoading(false)
     }
-
-    const certificationsSnapshot = await certificationsQuery.get()
-
-    const certificationsData = certificationsSnapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    })) as Certification[]
-
-    // Fetch group members' goals
-    const groupGoals: { [userId: string]: Goal[] } = {}
-    const groupGoalsSnapshot = await firestore().collection("goals").where("userId", "in", memberIds).get()
-    groupGoalsSnapshot.docs.forEach((doc) => {
-      const goal = { id: doc.id, ...doc.data() } as Goal
-      if (!groupGoals[goal.userId]) {
-        groupGoals[goal.userId] = []
-      }
-      groupGoals[goal.userId].push(goal)
-    })
-    setGroupGoals(groupGoals)
-
-    // 현재 사용자의 인증샷 중 삭제된 목표의 인증샷을 필터링합니다.
-    const filteredCertifications = certificationsData.filter((cert) => {
-      if (cert.userId === currentUser.uid) {
-        // 현재 사용자의 인증샷인 경우, 해당 목표가 존재하는지 확인
-        return userGoals.some((goal) => goal.id === cert.goalId)
-      }
-      // 다른 사용자의 인증샷은 해당 사용자의 현재 목표와 일치하는지 확인
-      return groupGoals[cert.userId]?.some((goal) => goal.id === cert.goalId)
-    })
-
-    setUserCertifications(filteredCertifications)
-    setIsLoading(false)
   }, [])
 
   useFocusEffect(

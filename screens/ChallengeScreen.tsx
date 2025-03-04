@@ -1,3 +1,5 @@
+"use client"
+
 import type { ChallengeHistory } from "../types/challenge"
 import type { Goal } from "../types/goal"
 import type { Certification } from "../types/certification"
@@ -140,40 +142,68 @@ export default function ChallengeScreen() {
     if (!currentUserAuth) return
 
     console.log("Fetching challenge group")
-    const userDoc = await firestore().collection("users").doc(currentUserAuth.uid).get()
-    const userData = userDoc.data()
-    const groupId = userData?.challengeGroupId
+    try {
+      const userDoc = await firestore().collection("users").doc(currentUserAuth.uid).get()
+      const userData = userDoc.data()
+      const groupId = userData?.challengeGroupId
 
-    if (groupId) {
-      console.log(`User belongs to challenge group: ${groupId}`)
-      setUserChallengeGroup(groupId)
-      const groupDoc = await firestore().collection("challengeGroups").doc(groupId).get()
-      const groupData = groupDoc.data()
-      setChallengeCode(groupData?.code || null)
-      setGroupName(groupData?.name || "")
+      if (groupId) {
+        console.log(`User belongs to challenge group: ${groupId}`)
+        setUserChallengeGroup(groupId)
 
-      const membersSnapshot = await firestore().collection("users").where("challengeGroupId", "==", groupId).get()
-      const membersData = membersSnapshot.docs.map((doc) => {
-        const memberData = doc.data()
-        return {
-          id: doc.id,
-          userId: doc.id,
-          name: memberData.nickname || "Unknown",
-          profileImage: memberData.profileImageUrl || "",
-          totalProgress: 0,
-          goals: [],
+        // 그룹 정보 가져오기
+        const groupDoc = await firestore().collection("challengeGroups").doc(groupId).get()
+        if (groupDoc.exists) {
+          const groupData = groupDoc.data()
+          setChallengeCode(groupData?.code || null)
+          setGroupName(groupData?.name || "")
+          console.log("Challenge group data:", groupData)
+        } else {
+          console.log("Challenge group document does not exist")
         }
-      })
 
-      console.log("Challenge group members:", membersData)
-      setCurrentMonthMembers(membersData)
+        // 그룹 멤버 가져오기
+        const membersSnapshot = await firestore().collection("users").where("challengeGroupId", "==", groupId).get()
+        console.log("Members snapshot size:", membersSnapshot.size)
 
-      membersData.forEach((member) => {
-        fetchUserGoals(member.userId)
-        fetchUserCertifications(member.userId)
-      })
-    } else {
-      console.log("User does not belong to any challenge group")
+        if (membersSnapshot.empty) {
+          console.log("No members found in the group")
+          setCurrentMonthMembers([])
+        } else {
+          const membersData = membersSnapshot.docs.map((doc) => {
+            const memberData = doc.data()
+            return {
+              id: doc.id,
+              userId: doc.id,
+              name: memberData.nickname || "Unknown",
+              profileImage: memberData.profileImageUrl || "",
+              totalProgress: 0,
+              goals: [],
+            }
+          })
+
+          console.log("Challenge group members:", membersData)
+          setCurrentMonthMembers(membersData)
+
+          // 각 멤버의 목표와 인증샷 가져오기
+          membersData.forEach((member) => {
+            fetchUserGoals(member.userId)
+            fetchUserCertifications(member.userId)
+          })
+        }
+      } else {
+        console.log("User does not belong to any challenge group")
+        setUserChallengeGroup(null)
+        setChallengeCode(null)
+        setGroupName("")
+        setCurrentMonthMembers([])
+      }
+    } catch (error) {
+      console.error("Error fetching challenge group:", error)
+      setUserChallengeGroup(null)
+      setChallengeCode(null)
+      setGroupName("")
+      setCurrentMonthMembers([])
     }
   }, [fetchUserGoals, fetchUserCertifications])
 
@@ -221,24 +251,38 @@ export default function ChallengeScreen() {
     const currentUser = auth().currentUser
     if (!currentUser) return
 
-    const groupSnapshot = await firestore().collection("challengeGroups").where("code", "==", inputCode).get()
+    try {
+      const groupSnapshot = await firestore().collection("challengeGroups").where("code", "==", inputCode).get()
 
-    if (groupSnapshot.empty) {
-      Alert.alert("오류", "유효하지 않은 챌린지 그룹 코드입니다.")
-      return
+      if (groupSnapshot.empty) {
+        Alert.alert("오류", "유효하지 않은 챌린지 그룹 코드입니다.")
+        return
+      }
+
+      const groupDoc = groupSnapshot.docs[0]
+      await firestore().collection("users").doc(currentUser.uid).update({
+        challengeGroupId: groupDoc.id,
+      })
+
+      setUserChallengeGroup(groupDoc.id)
+      setChallengeCode(inputCode)
+      setGroupName(groupDoc.data().name || "")
+      setInputCode("")
+
+      // 그룹 참여 후 데이터 새로고침
+      Alert.alert("성공", "챌린지 그룹에 참여하였습니다.", [
+        {
+          text: "확인",
+          onPress: () => {
+            // 데이터 새로고침
+            fetchChallengeGroup()
+          },
+        },
+      ])
+    } catch (error) {
+      console.error("Error joining challenge group:", error)
+      Alert.alert("오류", "챌린지 그룹 참여 중 문제가 발생했습니다.")
     }
-
-    const groupDoc = groupSnapshot.docs[0]
-    await firestore().collection("users").doc(currentUser.uid).update({
-      challengeGroupId: groupDoc.id,
-    })
-
-    setUserChallengeGroup(groupDoc.id)
-    setChallengeCode(inputCode)
-    setGroupName(groupDoc.data().name || "")
-    setInputCode("")
-    Alert.alert("성공", "챌린지 그룹에 참여하였습니다.")
-    fetchChallengeGroup()
   }
 
   const leaveChallengeGroup = async () => {

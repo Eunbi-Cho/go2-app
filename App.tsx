@@ -12,7 +12,7 @@ import { initializeKakaoSDK } from "@react-native-kakao/core"
 import * as Font from "expo-font"
 import * as SplashScreen from "expo-splash-screen"
 import type { RootStackParamList, MainTabsParamList, UserProfile } from "./types/navigation"
-import { StyleSheet, View, TouchableOpacity } from "react-native"
+import { StyleSheet, View } from "react-native"
 import type React from "react"
 import auth from "@react-native-firebase/auth"
 import firestore from "@react-native-firebase/firestore"
@@ -158,9 +158,30 @@ export default function App() {
       try {
         await SplashScreen.preventAutoHideAsync()
 
+        // Firebase Auth persistence는 React Native에서 기본적으로 LOCAL로 설정되어 있음
+        // 명시적인 setPersistence 호출 제거
+
         if (!EXPO_KAKAO_APP_KEY) {
           throw new Error("Kakao App Key is not defined")
         }
+
+        // 초기 인증 상태 확인
+        const currentUser = auth().currentUser
+        if (currentUser) {
+          setIsLoggedIn(true)
+          const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
+          if (userDoc.exists) {
+            const userData = userDoc.data()
+            setUserProfile({
+              nickname: userData?.nickname || currentUser.displayName || "Unknown",
+              profileImageUrl:
+                userData?.profileImageUrl || currentUser.photoURL || require("./assets/default-profile-image.png"),
+            })
+            const userHasGoals = await checkUserGoals(currentUser.uid)
+            setHasGoals(userHasGoals)
+          }
+        }
+
         await initializeKakaoSDK(EXPO_KAKAO_APP_KEY)
         await requestUserPermission()
         await loadFonts()
@@ -173,7 +194,13 @@ export default function App() {
     }
 
     prepare()
-  }, [loadFonts, requestUserPermission])
+  }, [loadFonts, requestUserPermission, checkUserGoals])
+
+  useEffect(() => {
+    // Firebase Auth의 상태 변경 리스너가 로그인 상태를 처리하므로
+    // 여기서는 별도의 로그인 시도를 하지 않습니다.
+    console.log("App initialized")
+  }, [])
 
   useEffect(() => {
     const unsubscribe = auth().onAuthStateChanged(async (user) => {
@@ -192,10 +219,17 @@ export default function App() {
             const userHasGoals = await checkUserGoals(user.uid)
             setHasGoals(userHasGoals)
 
+            // 로그인 상태에 따라 초기 화면 설정
             if (userHasGoals) {
-              navigationRef.current?.navigate("MainTabs")
+              navigationRef.current?.reset({
+                index: 0,
+                routes: [{ name: "MainTabs" }],
+              })
             } else {
-              navigationRef.current?.navigate("GoalCreation", { userProfile: profile, isInitialGoal: true })
+              navigationRef.current?.reset({
+                index: 0,
+                routes: [{ name: "GoalCreation", params: { userProfile: profile, isInitialGoal: true } }],
+              })
             }
           } else {
             console.log("User document does not exist in Firestore, creating new document")
@@ -235,6 +269,24 @@ export default function App() {
 
     return () => unsubscribe()
   }, [checkUserGoals, getFCMToken])
+
+  // 앱 초기화 시 로그인 상태 확인을 위한 추가 코드
+  useEffect(() => {
+    const checkInitialAuthState = async () => {
+      try {
+        // 현재 인증 상태 강제 새로고침
+        const currentUser = auth().currentUser
+        if (currentUser) {
+          await currentUser.reload()
+          console.log("Initial auth state refreshed for user:", currentUser.uid)
+        }
+      } catch (error) {
+        console.error("Error refreshing initial auth state:", error)
+      }
+    }
+
+    checkInitialAuthState()
+  }, [])
 
   useEffect(() => {
     const unsubscribe = messaging().onMessage(async (remoteMessage) => {
@@ -318,7 +370,10 @@ export default function App() {
     <View style={styles.container} onLayout={onLayoutRootView}>
       <SafeAreaProvider style={{ backgroundColor: "#f8f8f8" }}>
         <NavigationContainer ref={navigationRef}>
-          <Stack.Navigator screenOptions={{ headerShown: false }}>
+          <Stack.Navigator
+            screenOptions={{ headerShown: false }}
+            initialRouteName={isLoggedIn ? (hasGoals ? "MainTabs" : "GoalCreation") : "Login"}
+          >
             <Stack.Screen name="Login">
               {(props) => <LoginScreen {...props} onLoginSuccess={handleLoginSuccess} />}
             </Stack.Screen>
@@ -341,13 +396,7 @@ export default function App() {
             <Stack.Screen
               name="Settings"
               options={{
-                headerShown: true,
-                title: "설정",
-                headerLeft: () => (
-                  <TouchableOpacity onPress={() => navigationRef.current?.goBack()}>
-                    <Ionicons name="arrow-back" size={24} color="#000000" />
-                  </TouchableOpacity>
-                ),
+                headerShown: false,
               }}
             >
               {(props) => <SettingsScreen {...props} handleLogout={handleLogout} />}

@@ -3,6 +3,7 @@ import { View, Text, StyleSheet, TouchableOpacity, Alert } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import { CommonActions } from "@react-navigation/native"
 import type { NativeStackNavigationProp } from "@react-navigation/native-stack"
+import type { RouteProp } from "@react-navigation/native"
 import auth from "@react-native-firebase/auth"
 import firestore from "@react-native-firebase/firestore"
 import * as KakaoUser from "@react-native-kakao/user"
@@ -11,11 +12,12 @@ import { Ionicons } from "@expo/vector-icons"
 import type { RootStackParamList } from "../types/navigation"
 
 type SettingsScreenProps = {
-  navigation: NativeStackNavigationProp<RootStackParamList, "Settings">
+  navigation: NativeStackNavigationProp<RootStackParamList>
+  route: RouteProp<RootStackParamList, "Settings">
   handleLogout: () => void
 }
 
-const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, handleLogout }) => {
+const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, handleLogout, route }) => {
   const handleDeleteAccount = async () => {
     Alert.alert("계정 삭제", "계정을 정말 삭제하시겠습니까? 이 계정의 데이터가 모두 삭제됩니다?", [
       {
@@ -105,6 +107,9 @@ const SettingsScreen: React.FC<SettingsScreenProps> = ({ navigation, handleLogou
 
   return (
     <SafeAreaView style={styles.container} edges={["bottom"]}>
+      <TouchableOpacity style={styles.backButton} onPress={() => navigation.goBack()}>
+        <Ionicons name="arrow-back" size={24} color="#000000" />
+      </TouchableOpacity>
       <View style={styles.content}>
         <TouchableOpacity style={styles.option} onPress={handleLogoutPress}>
           <Ionicons name="log-out-outline" size={24} color="#000000" style={styles.icon} />
@@ -126,8 +131,14 @@ const styles = StyleSheet.create({
   },
   content: {
     flex: 1,
-    paddingTop: 20,
+    paddingTop: 120,
     paddingHorizontal: 20,
+  },
+  backButton: {
+    position: "absolute",
+    top: 60,
+    left: 20,
+    zIndex: 10,
   },
   option: {
     backgroundColor: "#ffffff",

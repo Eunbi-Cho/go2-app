@@ -28,19 +28,8 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
   const [isLoading, setIsLoading] = useState(false)
 
   useEffect(() => {
-    const checkLoginStatus = async () => {
-      try {
-        const token = await KakaoUser.getAccessToken()
-        if (token) {
-          const profile = await KakaoUser.me()
-          handleKakaoLogin(profile)
-        }
-      } catch (error) {
-        console.log("No Kakao access token available")
-      }
-    }
-
-    checkLoginStatus()
+    // 로그인 화면이 표시될 때 로그인 상태 초기화
+    console.log("Login screen initialized")
   }, [])
 
   const uploadProfileImage = async (imageUrl: string, userId: string): Promise<string> => {
@@ -151,6 +140,10 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
             profileImageUrl: profile.profileImageUrl ?? require("../assets/default-profile-image.png"),
           })
         }
+
+        // 로그인 상태 유지를 위한 추가 설정
+        await user.reload()
+        console.log("User login state refreshed")
 
         return
       } catch (loginError) {
