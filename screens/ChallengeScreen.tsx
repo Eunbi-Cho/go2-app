@@ -59,55 +59,124 @@ export default function ChallengeScreen() {
         const certDate = cert.timestamp.toDate()
         const certMonth = certDate.getMonth() + 1
         const certYear = certDate.getFullYear()
-        const isMatch = certYear === year && certMonth === month
-
-        if (isMatch) {
-          console.log(`Found certification for user ${userId} on ${certDate} matching ${year}-${month}`)
-        }
-
-        return isMatch
+        return certYear === year && certMonth === month
       })
 
       console.log(`User ${userId} has ${monthCerts.length} certifications for ${year}-${month}`)
 
-      // 각 목표별 달성률 계산
-      const goalProgressMap: { [goalId: string]: { count: number; weeklyGoal: number } } = {}
+      // 해당 월의 주차 계산 (월요일 시작 기준)
+      const getWeeksInMonth = (year: number, month: number) => {
+        // 월의 첫날과 마지막날
+        const firstDay = new Date(year, month - 1, 1)
+        const lastDay = new Date(year, month, 0)
 
-      // 각 목표의 주간 목표 정보 초기화
-      userGoals.forEach((goal) => {
-        goalProgressMap[goal.id] = { count: 0, weeklyGoal: goal.weeklyGoal }
-      })
+        const weeks = []
+        // 첫 주의 시작일 (월요일 기준)
+        const currentWeekStart = new Date(firstDay)
+        // 첫날이 월요일이 아니면 이전 월요일로 조정
+        const dayOfWeek = currentWeekStart.getDay() // 0: 일요일, 1: 월요일, ...
+        if (dayOfWeek !== 1) {
+          // 월요일이 아니면
+          currentWeekStart.setDate(currentWeekStart.getDate() - (dayOfWeek === 0 ? 6 : dayOfWeek - 1))
+        }
 
-      // 해당 월의 인증샷으로 각 목표별 달성 횟수 계산
-      monthCerts.forEach((cert) => {
-        if (goalProgressMap[cert.goalId]) {
-          goalProgressMap[cert.goalId].count += 1
+        // 주차 계산
+        while (currentWeekStart <= lastDay) {
+          const weekEnd = new Date(currentWeekStart)
+          weekEnd.setDate(weekEnd.getDate() + 6) // 일요일까지
+
+          // 해당 월에 속하는 날짜만 고려
+          const effectiveStart = new Date(Math.max(firstDay.getTime(), currentWeekStart.getTime()))
+          const effectiveEnd = new Date(Math.min(lastDay.getTime(), weekEnd.getTime()))
+
+          // 해당 월에 속하는 날짜가 있는 주차만 추가
+          if (effectiveStart <= effectiveEnd) {
+            weeks.push({
+              start: effectiveStart,
+              end: effectiveEnd,
+            })
+          }
+
+          // 다음 주 월요일로 이동
+          currentWeekStart.setDate(currentWeekStart.getDate() + 7)
+        }
+
+        return weeks
+      }
+
+      const weeks = getWeeksInMonth(year, month)
+      console.log(`Found ${weeks.length} weeks in ${year}-${month}`)
+
+      // 현재 날짜를 기준으로 미래 주차 필터링
+      const today = new Date()
+      const filteredWeeks = weeks.filter((week) => week.start <= today)
+      console.log(`Using ${filteredWeeks.length} weeks up to current date for ${year}-${month}`)
+
+      // 각 주차별 달성률 계산
+      const weeklyProgressRates: number[] = []
+
+      // 이후 코드에서 weeks 대신 filteredWeeks를 사용하도록 변경
+      filteredWeeks.forEach((week, weekIndex) => {
+        // 이 주차의 인증샷 필터링
+        const weekCerts = monthCerts.filter((cert) => {
+          const certDate = cert.timestamp.toDate()
+          return certDate >= week.start && certDate <= week.end
+        })
+
+        console.log(
+          `Week ${weekIndex + 1}: ${week.start.toDateString()} to ${week.end.toDateString()} has ${weekCerts.length} certifications`,
+        )
+
+        // 각 목표별 이 주차의 달성 횟수 계산
+        const goalProgressMap: { [goalId: string]: { count: number; weeklyGoal: number } } = {}
+
+        // 각 목표의 주간 목표 정보 초기화
+        userGoals.forEach((goal) => {
+          goalProgressMap[goal.id] = { count: 0, weeklyGoal: goal.weeklyGoal }
+        })
+
+        // 이 주차의 인증샷으로 각 목표별 달성 횟수 계산
+        weekCerts.forEach((cert) => {
+          if (goalProgressMap[cert.goalId]) {
+            goalProgressMap[cert.goalId].count += 1
+          }
+        })
+
+        // 이 주차의 각 목표별 달성률 계산 및 합산
+        let weekTotalProgressPercentage = 0
+        let weekGoalCount = 0
+
+        Object.entries(goalProgressMap).forEach(([goalId, { count, weeklyGoal }]) => {
+          // 주간 목표가 0이면 계산에서 제외
+          if (weeklyGoal > 0) {
+            // 달성률은 최대 100%로 제한
+            const progressPercentage = Math.min((count / weeklyGoal) * 100, 100)
+            console.log(
+              `Week ${weekIndex + 1}, Goal ${goalId} progress: ${count}/${weeklyGoal} = ${progressPercentage}%`,
+            )
+            weekTotalProgressPercentage += progressPercentage
+            weekGoalCount++
+          }
+        })
+
+        // 이 주차의 평균 달성률 계산
+        if (weekGoalCount > 0) {
+          const weekAvgProgress = weekTotalProgressPercentage / weekGoalCount
+          weeklyProgressRates.push(weekAvgProgress)
+          console.log(`Week ${weekIndex + 1} average progress: ${weekAvgProgress}%`)
         }
       })
 
-      // 각 목표별 달성률 계산 및 합산
-      let totalProgressPercentage = 0
-      let goalCount = 0
-
-      Object.entries(goalProgressMap).forEach(([goalId, { count, weeklyGoal }]) => {
-        // 주간 목표가 0이면 계산에서 제외
-        if (weeklyGoal > 0) {
-          // 달성률은 최대 100%로 제한
-          const progressPercentage = Math.min((count / weeklyGoal) * 100, 100)
-          console.log(`Goal ${goalId} progress: ${count}/${weeklyGoal} = ${progressPercentage}%`)
-          totalProgressPercentage += progressPercentage
-          goalCount++
-        }
-      })
-
-      // 목표가 없으면 0% 반환
-      if (goalCount === 0) {
+      // 모든 주차의 평균 달성률 계산
+      if (weeklyProgressRates.length === 0) {
         return 0
       }
 
-      // 평균 달성률 계산 및 반올림
-      const result = Math.round(totalProgressPercentage / goalCount)
-      console.log(`User ${userId}'s average progress for ${year}-${month}: ${result}%`)
+      const monthlyAvgProgress = weeklyProgressRates.reduce((sum, rate) => sum + rate, 0) / weeklyProgressRates.length
+      const result = Math.round(monthlyAvgProgress)
+      console.log(
+        `User ${userId}'s monthly average progress for ${year}-${month}: ${result}% (from ${weeklyProgressRates.length} weeks)`,
+      )
       return result
     },
     [certifications],
