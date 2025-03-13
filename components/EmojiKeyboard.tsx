@@ -1,3 +1,5 @@
+"use client"
+
 import type React from "react"
 import { useState } from "react"
 import { View, Text, TouchableOpacity, FlatList, StyleSheet, ScrollView, Dimensions } from "react-native"
@@ -16,36 +18,6 @@ interface EmojiCategory {
 }
 
 const EMOJI_CATEGORIES: EmojiCategory[] = [
-  {
-    title: "스포츠",
-    icon: "⚽",
-    emojis: [
-      "⚽",
-      "🏀",
-      "⚾",
-      "🎾",
-      "🏐",
-      "🎱",
-      "⛳",
-      "🤿",
-      "🥋",
-      "🛹",
-      "🎿",
-      "🛷",
-      "🏄",
-      "🏄‍♂️",
-      "🚴",
-      "🚴‍♂️",
-      "🧗‍♀️",
-      "🏋️",
-      "🏃",
-      "🏊‍♂️",
-      "🏸",
-      "🎳",
-      "🏑",
-      "🏒",
-    ],
-  },
   {
     title: "표정",
     icon: "😊",
@@ -74,12 +46,22 @@ const EMOJI_CATEGORIES: EmojiCategory[] = [
       "🤨",
       "😎",
       "🥳",
-    ],
-  },
-  {
-    title: "제스처",
-    icon: "👋",
-    emojis: [
+      "🤩",
+      "🥸",
+      "😡",
+      "🤯",
+      "🤭",
+      "🫡",
+      "🫢",
+      "🤫",
+      "🫠",
+      "😶",
+      "🫨",
+      "🤢",
+      "🤮",
+      "🤧",
+      "🤐",
+      "🥴",
       "👋",
       "🤚",
       "✋",
@@ -104,6 +86,48 @@ const EMOJI_CATEGORIES: EmojiCategory[] = [
       "🤛",
       "🤜",
       "👏",
+    ],
+  },
+  {
+    title: "스포츠",
+    icon: "⚽",
+    emojis: [
+      "🤸‍♀️",
+      "🧘‍♀️",
+      "🧘",
+      "🚣‍♀️",
+      "🧗‍♀️",
+      "🩰",
+      "🏂",
+      "⚽",
+      "🏀",
+      "⚾",
+      "🎾",
+      "🏐",
+      "🎱",
+      "⛳",
+      "🤿",
+      "🥋",
+      "🛹",
+      "🎿",
+      "🛷",
+      "🏄",
+      "🏄‍♂️",
+      "🚴",
+      "🚴‍♂️",
+      "🧗‍♀️",
+      "🏋️",
+      "🏃",
+      "🏊‍♂️",
+      "🏸",
+      "🎳",
+      "🏑",
+      "🏓",
+      "🥊",
+      "⛸️",
+      "⛹️‍♀️",
+      "🪂",
+      "🏇"
     ],
   },
   {
@@ -134,6 +158,44 @@ const EMOJI_CATEGORIES: EmojiCategory[] = [
       "🥤",
       "🍴",
       "🥢",
+      "🍎",
+      "🍐",
+      "🍊",
+      "🍌",
+      "🍉",
+      "🍇",
+      "🍓",
+      "🫐",
+      "🍈",
+      "🍒",
+      "🍑",
+      "🥭",
+      "🍍",
+      "🥥",
+      "🥝",
+      "🍅",
+      "🍆",
+      "🫛",
+      "🥦",
+      "🥬",
+      "🌽",
+      "🥕",
+      "🍠",
+      "🥐",
+      "🥯",
+      "🍞",
+      "🥖",
+      "🥨",
+      "🧀",
+      "🥚",
+      "🥓",
+      "🥩",
+      "🍗",
+      "🍼",
+      "🥛",
+      "🍯",
+      "🫖",
+      "🍷"
     ],
   },
   {
@@ -164,37 +226,35 @@ const EMOJI_CATEGORIES: EmojiCategory[] = [
       "🦘",
       "🦒",
       "🦬",
+      "🐔",
+      "🐧",
+      "🐣",
+      "🪿",
+      "🦅",
+      "🐝",
+      "🦕"
     ],
   },
   {
-    title: "기타",
-    icon: "🌈",
+    title: "날씨/천체",
+    icon: "☀️",
     emojis: [
-      "🌈",
-      "📚",
-      "🎬",
-      "🎵",
-      "🚗",
-      "🏁",
-      "🎮",
-      "📱",
-      "💻",
-      "📷",
-      "🎨",
-      "🎭",
-      "🎪",
-      "🎢",
-      "🎡",
-      "🎯",
-      "🎲",
-      "🎰",
-      "🎧",
-      "📺",
-      "🔮",
-      "🎁",
-      "🏆",
-      "🎉",
-    ],
+      "☀️", "🌤️", "⛅", "🌥️", "☁️", "🌦️", "🌧️", "⛈️", "🌩️", "🌨️", "❄️", "☃️", "⛄", "🌬️", 
+      "💨", "🌪️", "🌫️", "🌈", "☂️", "☔", "⚡", "❄️", "🌀", "🌊", "🌋", "🔥", "💧", "🌊", 
+      "🌌", "🌙", "🌚", "🌕", "🌖", "🌗", "🌘", "🌑", "🌒", "🌓", "🌔", "🌛", "🌜", "🌝", 
+      "🌞", "⭐", "🌟", "💫", "✨", "☄️", "🌠", "🌡️", "🪐", "⚡", "🔆", "🔅", "♨️", "💥", 
+      "☃️", "⛄", "🧊", "🌄", "🌅", "🌇", "🌆", "🌃", "🌉", "🌁", "🏞️", "🌍", "🌎", "🌏", 
+      "🌐", "🏜️", "🏖️", "🏝️", "☘️", "🌱", "🌿", "🌴", "🌳", "🌲", "⛰️", "☀️", "🌦️", "🌧️", 
+      "☄️", "⚡", "🌈", "☔",
+      "🍄",
+      "🐚",
+      "🌷",
+      "🌹",
+      "🌺",
+      "🪻",
+      "🌸",
+      "🌼"
+    ]
   },
   {
     title: "축하/기념",
@@ -211,19 +271,33 @@ const EMOJI_CATEGORIES: EmojiCategory[] = [
       "🤵",
       "💍",
       "🔮",
-      "🌹",
-      "🌷",
-      "🌸",
-      "🌺",
-      "🍀",
-      "🌿",
-      "🎄",
-      "🎋",
-      "🍁",
       "🏆",
       "🥇",
       "🥈",
       "🥉",
+      "🩷",
+      "❤️",
+      "🧡",
+      "💛",
+      "💚",
+      "🩵",
+      "💙",
+      "💜",
+      "🖤",
+      "🩶",
+      "🤍",
+      "🤎",
+      "❤️‍🔥",
+      "❤️‍🩹",
+      "💖",
+      "💘",
+      "💝",
+      "✅",
+      "❇️",
+      "🕐",
+      "📣",
+      "💬",
+      "💭"
     ],
   },
   {
@@ -254,12 +328,6 @@ const EMOJI_CATEGORIES: EmojiCategory[] = [
       "🚽",
       "📎",
       "✒️",
-    ],
-  },
-  {
-    title: "교통",
-    icon: "🚗",
-    emojis: [
       "🚗",
       "🚕",
       "🚙",
@@ -290,30 +358,27 @@ const EMOJI_CATEGORIES: EmojiCategory[] = [
     title: "국기",
     icon: "🏁",
     emojis: [
-      "🏁",
-      "🚩",
-      "🏴",
-      "🏳️",
-      "🏳️‍🌈",
-      "🏳️‍⚧️",
-      "🏴‍☠️",
-      "🇺🇳",
-      "🇦🇴",
-      "🇧🇫",
-      "🇧🇮",
-      "🇧🇼",
-      "🇨🇫",
-      "🇨🇩",
-      "🇨🇻",
-      "🇩🇯",
-      "🇪🇷",
-      "🇪🇹",
-      "🇬🇲",
-      "🇬🇼",
-      "🇰🇪",
-      "🇱🇸",
-      "🇲🇬",
-      "🇲🇱",
+      "🏁", "🚩", "🏴", "🏳️", "🏳️‍🌈", "🏳️‍⚧️", "🏴‍☠️", "🇺🇳", 
+      "🇦🇨", "🇦🇩", "🇦🇪", "🇦🇫", "🇦🇬", "🇦🇮", "🇦🇱", "🇦🇲", "🇦🇴", "🇦🇶", "🇦🇷", "🇦🇸", "🇦🇹", 
+      "🇦🇺", "🇦🇼", "🇦🇽", "🇦🇿", "🇧🇦", "🇧🇧", "🇧🇩", "🇧🇪", "🇧🇫", "🇧🇬", "🇧🇭", "🇧🇮", "🇧🇯", 
+      "🇧🇱", "🇧🇲", "🇧🇳", "🇧🇴", "🇧🇶", "🇧🇷", "🇧🇸", "🇧🇹", "🇧🇻", "🇧🇼", "🇧🇾", "🇧🇿", "🇨🇦", 
+      "🇨🇨", "🇨🇩", "🇨🇫", "🇨🇬", "🇨🇭", "🇨🇮", "🇨🇰", "🇨🇱", "🇨🇲", "🇨🇳", "🇨🇴", "🇨🇵", "🇨🇷", 
+      "🇨🇺", "🇨🇻", "🇨🇼", "🇨🇽", "🇨🇾", "🇨🇿", "🇩🇪", "🇩🇬", "🇩🇯", "🇩🇰", "🇩🇲", "🇩🇴", "🇩🇿", 
+      "🇪🇦", "🇪🇨", "🇪🇪", "🇪🇬", "🇪🇭", "🇪🇷", "🇪🇸", "🇪🇹", "🇪🇺", "🇫🇮", "🇫🇯", "🇫🇰", "🇫🇲", 
+      "🇫🇴", "🇫🇷", "🇬🇦", "🇬🇧", "🇬🇩", "🇬🇪", "🇬🇫", "🇬🇬", "🇬🇭", "🇬🇮", "🇬🇱", "🇬🇲", "🇬🇳", 
+      "🇬🇵", "🇬🇶", "🇬🇷", "🇬🇸", "🇬🇹", "🇬🇺", "🇬🇼", "🇬🇾", "🇭🇰", "🇭🇲", "🇭🇳", "🇭🇷", "🇭🇹", 
+      "🇭🇺", "🇮🇨", "🇮🇩", "🇮🇪", "🇮🇱", "🇮🇲", "🇮🇳", "🇮🇴", "🇮🇶", "🇮🇷", "🇮🇸", "🇮🇹", "🇯🇪", 
+      "🇯🇲", "🇯🇴", "🇯🇵", "🇰🇪", "🇰🇬", "🇰🇭", "🇰🇮", "🇰🇲", "🇰🇳", "🇰🇵", "🇰🇷", "🇰🇼", "🇰🇾", 
+      "🇰🇿", "🇱🇦", "🇱🇧", "🇱🇨", "🇱🇮", "🇱🇰", "🇱🇷", "🇱🇸", "🇱🇹", "🇱🇺", "🇱🇻", "🇱🇾", "🇲🇦", 
+      "🇲🇨", "🇲🇩", "🇲🇪", "🇲🇫", "🇲🇬", "🇲🇭", "🇲🇰", "🇲🇱", "🇲🇲", "🇲🇳", "🇲🇴", "🇲🇵", "🇲🇶", 
+      "🇲🇷", "🇲🇸", "🇲🇹", "🇲🇺", "🇲🇻", "🇲🇼", "🇲🇽", "🇲🇾", "🇲🇿", "🇳🇦", "🇳🇨", "🇳🇪", "🇳🇫", 
+      "🇳🇬", "🇳🇮", "🇳🇱", "🇳🇴", "🇳🇵", "🇳🇷", "🇳🇺", "🇳🇿", "🇴🇲", "🇵🇦", "🇵🇪", "🇵🇫", "🇵🇬", 
+      "🇵🇭", "🇵🇰", "🇵🇱", "🇵🇲", "🇵🇳", "🇵🇷", "🇵🇸", "🇵🇹", "🇵🇼", "🇵🇾", "🇶🇦", "🇷🇪", "🇷🇴", 
+      "🇷🇸", "🇷🇺", "🇷🇼", "🇸🇦", "🇸🇧", "🇸🇨", "🇸🇩", "🇸🇪", "🇸🇬", "🇸🇭", "🇸🇮", "🇸🇯", "🇸🇰", 
+      "🇸🇱", "🇸🇲", "🇸🇳", "🇸🇴", "🇸🇷", "🇸🇸", "🇸🇹", "🇸🇻", "🇸🇽", "🇸🇾", "🇸🇿", "🇹🇦", "🇹🇨", 
+      "🇹🇩", "🇹🇫", "🇹🇬", "🇹🇭", "🇹🇯", "🇹🇰", "🇹🇱", "🇹🇲", "🇹🇳", "🇹🇴", "🇹🇷", "🇹🇹", "🇹🇻", 
+      "🇹🇼", "🇹🇿", "🇺🇦", "🇺🇬", "🇺🇲", "🇺🇸", "🇺🇾", "🇺🇿", "🇻🇦", "🇻🇨", "🇻🇪", "🇻🇬", "🇻🇮", 
+      "🇻🇳", "🇻🇺", "🇼🇫", "🇼🇸", "🇽🇰", "🇾🇪", "🇾🇹", "🇿🇦", "🇿🇲", "🇿🇼"
     ],
   },
 ]
@@ -336,30 +401,37 @@ const EmojiKeyboard: React.FC<EmojiKeyboardProps> = ({ onEmojiSelect, onClose, i
     >
       <View style={styles.container}>
         <View style={styles.handleBar} />
-        <FlatList
-          data={EMOJI_CATEGORIES[selectedCategory].emojis}
-          renderItem={({ item }) => (
-            <TouchableOpacity style={styles.emojiItem} onPress={() => onEmojiSelect(item)}>
-              <Text style={styles.emojiText}>{item}</Text>
-            </TouchableOpacity>
-          )}
-          keyExtractor={(item, index) => index.toString()}
-          numColumns={6}
-          showsVerticalScrollIndicator={false}
-          contentContainerStyle={styles.emojiList}
-        />
 
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryContainer}>
-          {EMOJI_CATEGORIES.map((category, index) => (
-            <TouchableOpacity
-              key={category.title}
-              style={[styles.categoryButton, selectedCategory === index && styles.selectedCategory]}
-              onPress={() => setSelectedCategory(index)}
-            >
-              <Text style={styles.categoryText}>{category.icon}</Text>
-            </TouchableOpacity>
-          ))}
-        </ScrollView>
+        {/* Main content area with fixed height */}
+        <View style={styles.contentContainer}>
+          <FlatList
+            data={EMOJI_CATEGORIES[selectedCategory].emojis}
+            renderItem={({ item }) => (
+              <TouchableOpacity style={styles.emojiItem} onPress={() => onEmojiSelect(item)}>
+                <Text style={styles.emojiText}>{item}</Text>
+              </TouchableOpacity>
+            )}
+            keyExtractor={(item, index) => index.toString()}
+            numColumns={6}
+            showsVerticalScrollIndicator={false}
+            contentContainerStyle={styles.emojiList}
+          />
+        </View>
+
+        {/* Fixed bottom category bar */}
+        <View style={styles.categoryBarContainer}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} style={styles.categoryContainer}>
+            {EMOJI_CATEGORIES.map((category, index) => (
+              <TouchableOpacity
+                key={category.title}
+                style={[styles.categoryButton, selectedCategory === index && styles.selectedCategory]}
+                onPress={() => setSelectedCategory(index)}
+              >
+                <Text style={styles.categoryText}>{category.icon}</Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
       </View>
     </Modal>
   )
@@ -376,6 +448,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 20,
     borderTopRightRadius: 20,
     paddingTop: 12,
+    flexDirection: "column",
   },
   handleBar: {
     width: 40,
@@ -385,9 +458,13 @@ const styles = StyleSheet.create({
     alignSelf: "center",
     marginBottom: 8,
   },
+  contentContainer: {
+    flex: 1,
+    paddingBottom: 0,
+  },
   emojiList: {
-    paddingHorizontal: 8,
-    paddingVertical: 16,
+    paddingHorizontal: 16,
+    paddingBottom: 8,
   },
   emojiItem: {
     width: "16.666%",
@@ -398,12 +475,15 @@ const styles = StyleSheet.create({
   emojiText: {
     fontSize: 32,
   },
+  categoryBarContainer: {
+    height: 80,
+    borderTopWidth: 1,
+    borderTopColor: "#EBEBEB",
+  },
   categoryContainer: {
     flexDirection: "row",
-    paddingVertical: 8,
-    paddingHorizontal: 8,
-    borderTopWidth: 1,
-    borderTopColor: "#f8f8f8",
+    paddingVertical: 12,
+    paddingHorizontal: 24,
   },
   categoryButton: {
     width: 40,
@@ -414,7 +494,7 @@ const styles = StyleSheet.create({
     marginHorizontal: 4,
   },
   selectedCategory: {
-    backgroundColor: "#f8f8f8",
+    backgroundColor: "#EBEBEB",
   },
   categoryText: {
     fontSize: 24,

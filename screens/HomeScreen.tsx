@@ -395,7 +395,6 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
     if (certifications.length === 0) {
       return (
         <View style={styles.emptyStateContainer}>
-          <Text style={styles.emptyStateText}>오늘 인증된 목표가 없습니다</Text>
         </View>
       )
     }
