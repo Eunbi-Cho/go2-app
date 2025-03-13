@@ -42,6 +42,9 @@ export default function ChallengeScreen() {
   const [historicalData, setHistoricalData] = useState<{ [key: string]: ChallengeHistory }>({})
   const [currentUser, setCurrentUser] = useState<User | null>(null)
   const [users, setUsers] = useState<{ [userId: string]: User }>({})
+  const [userChallengeGroups, setUserChallengeGroups] = useState<string[]>([])
+  const [groupsData, setGroupsData] = useState<{ [groupId: string]: { name: string; code: string } }>({})
+  const [activeTab, setActiveTab] = useState<string | null>(null)
 
   const calculateTotalProgress = useCallback(
     (userGoals: Goal[], userId: string, year: number, month: number) => {
@@ -386,66 +389,89 @@ export default function ChallengeScreen() {
       })
   }, [])
 
-  const fetchChallengeGroup = useCallback(async () => {
-    const currentUserAuth = auth().currentUser
-    if (!currentUserAuth) return
+  const fetchGroupMembers = useCallback(
+    async (groupId: string) => {
+      if (!groupId) return
 
-    console.log("Fetching challenge group")
-    try {
-      const userDoc = await firestore().collection("users").doc(currentUserAuth.uid).get()
-      const userData = userDoc.data()
-      const groupId = userData?.challengeGroupId
+      try {
+        // 그룹 멤버 가져오기 - 주 그룹이 해당 그룹인 사용자와 추가 그룹에 해당 그룹이 있는 사용자 모두 가져오기
+        const primaryMembersSnapshot = await firestore()
+          .collection("users")
+          .where("challengeGroupId", "==", groupId)
+          .get()
+        const additionalMembersSnapshot = await firestore()
+          .collection("users")
+          .where("challengeGroupIds", "array-contains", groupId)
+          .get()
 
-      if (groupId) {
-        console.log(`User belongs to challenge group: ${groupId}`)
-        setUserChallengeGroup(groupId)
+        // 중복 제거를 위한 Set
+        const memberIds = new Set<string>()
+        const membersData: ChallengeMember[] = []
 
-        // 그룹 정보 가져오기
-        const groupDoc = await firestore().collection("challengeGroups").doc(groupId).get()
-        if (groupDoc.exists) {
-          const groupData = groupDoc.data()
-          setChallengeCode(groupData?.code || null)
-          setGroupName(groupData?.name || "")
-          console.log("Challenge group data:", groupData)
-        } else {
-          console.log("Challenge group document does not exist")
-        }
-
-        // 그룹 멤버 가져오기
-        const membersSnapshot = await firestore().collection("users").where("challengeGroupId", "==", groupId).get()
-        console.log("Members snapshot size:", membersSnapshot.size)
-
-        if (membersSnapshot.empty) {
-          console.log("No members found in the group")
-          setCurrentMonthMembers([])
-        } else {
-          const membersData = membersSnapshot.docs.map((doc) => {
+        // 주 그룹 멤버 처리
+        primaryMembersSnapshot.docs.forEach((doc) => {
+          if (!memberIds.has(doc.id)) {
+            memberIds.add(doc.id)
             const memberData = doc.data()
-            return {
+            membersData.push({
               id: doc.id,
               userId: doc.id,
               name: memberData.nickname || "Unknown",
               profileImage: memberData.profileImageUrl || "",
               totalProgress: 0,
               goals: [],
-            }
-          })
+            })
+          }
+        })
 
-          console.log("Challenge group members:", membersData)
-          setCurrentMonthMembers(membersData)
+        // 추가 그룹 멤버 처리
+        additionalMembersSnapshot.docs.forEach((doc) => {
+          if (!memberIds.has(doc.id)) {
+            memberIds.add(doc.id)
+            const memberData = doc.data()
+            membersData.push({
+              id: doc.id,
+              userId: doc.id,
+              name: memberData.nickname || "Unknown",
+              profileImage: memberData.profileImageUrl || "",
+              totalProgress: 0,
+              goals: [],
+            })
+          }
+        })
 
-          // 각 멤버의 목표 가져오기
-          membersData.forEach((member) => {
-            fetchUserGoals(member.userId)
-          })
+        // 현재 사용자가 멤버 목록에 없으면 추가
+        const currentUserAuth = auth().currentUser
+        if (currentUserAuth && !memberIds.has(currentUserAuth.uid)) {
+          const currentUserDoc = await firestore().collection("users").doc(currentUserAuth.uid).get()
+          if (currentUserDoc.exists) {
+            const currentUserData = currentUserDoc.data()
+            membersData.push({
+              id: currentUserAuth.uid,
+              userId: currentUserAuth.uid,
+              name: currentUserData?.nickname || "Unknown",
+              profileImage: currentUserData?.profileImageUrl || "",
+              totalProgress: 0,
+              goals: [],
+            })
+          }
+        }
 
-          // 모든 멤버의 인증샷 가져오기 (전체 기간)
-          const memberIds = membersData.map((member) => member.userId)
+        console.log("Challenge group members:", membersData)
+        setCurrentMonthMembers(membersData)
 
+        // 각 멤버의 목표 가져오기
+        membersData.forEach((member) => {
+          fetchUserGoals(member.userId)
+        })
+
+        // 모든 멤버의 인증샷 가져오기 (전체 기간)
+        const memberIdsArray = Array.from(memberIds)
+        if (memberIdsArray.length > 0) {
           // 인증샷 데이터 가져오기 (전체 기간)
           const certificationsSnapshot = await firestore()
             .collection("certifications")
-            .where("userId", "in", memberIds)
+            .where("userId", "in", memberIdsArray)
             .get()
 
           console.log(`Fetched ${certificationsSnapshot.size} certifications for all members`)
@@ -462,21 +488,358 @@ export default function ChallengeScreen() {
 
           setCertifications(certsByUser)
         }
+      } catch (error) {
+        console.error("Error fetching group members:", error)
+        setCurrentMonthMembers([])
+      }
+    },
+    [fetchUserGoals],
+  )
+
+  const fetchChallengeGroup = useCallback(async () => {
+    const currentUserAuth = auth().currentUser
+    if (!currentUserAuth) return
+
+    console.log("Fetching challenge groups")
+    try {
+      const userDoc = await firestore().collection("users").doc(currentUserAuth.uid).get()
+      const userData = userDoc.data()
+      const groupId = userData?.challengeGroupId
+      const groupIds = userData?.challengeGroupIds || []
+
+      // Combine primary group and additional groups
+      const allGroupIds = groupId ? [groupId, ...groupIds.filter((id: string) => id !== groupId)] : groupIds
+
+      setUserChallengeGroups(allGroupIds)
+
+      // Set active tab to the first group or null if no groups
+      // 사용자가 명시적으로 새 그룹 탭을 선택한 경우를 처리하기 위해 조건을 수정
+      const userSelectedNewGroupTab = activeTab === null && userChallengeGroups.length > 0
+      if (allGroupIds.length > 0 && !activeTab && !userSelectedNewGroupTab) {
+        setActiveTab(allGroupIds[0])
+      } else if (allGroupIds.length === 0) {
+        setActiveTab(null)
+      }
+      // 사용자가 명시적으로 새 그룹 탭을 선택한 경우 activeTab을 null로 유지
+
+      // Set primary group for backward compatibility
+      if (groupId) {
+        setUserChallengeGroup(groupId)
+
+        // 그룹 정보 가져오기
+        const groupDoc = await firestore().collection("challengeGroups").doc(groupId).get()
+        if (groupDoc.exists) {
+          const groupData = groupDoc.data()
+          setChallengeCode(groupData?.code || null)
+          setGroupName(groupData?.name || "")
+          console.log("Challenge group data:", groupData)
+        } else {
+          console.log("Challenge group document does not exist")
+        }
       } else {
-        console.log("User does not belong to any challenge group")
         setUserChallengeGroup(null)
         setChallengeCode(null)
         setGroupName("")
+      }
+
+      // Fetch all groups data
+      const groupsInfo: { [groupId: string]: { name: string; code: string } } = {}
+
+      await Promise.all(
+        allGroupIds.map(async (gId: string) => {
+          const groupDoc = await firestore().collection("challengeGroups").doc(gId).get()
+          if (groupDoc.exists) {
+            const groupData = groupDoc.data()
+            groupsInfo[gId] = {
+              name: groupData?.name || "그룹",
+              code: groupData?.code || "",
+            }
+          }
+        }),
+      )
+
+      setGroupsData(groupsInfo)
+
+      // If we have an active tab, fetch members for that group
+      if (activeTab && allGroupIds.includes(activeTab)) {
+        await fetchGroupMembers(activeTab)
+      } else if (allGroupIds.length > 0) {
+        await fetchGroupMembers(allGroupIds[0])
+      } else {
         setCurrentMonthMembers([])
       }
     } catch (error) {
-      console.error("Error fetching challenge group:", error)
+      console.error("Error fetching challenge groups:", error)
       setUserChallengeGroup(null)
       setChallengeCode(null)
       setGroupName("")
       setCurrentMonthMembers([])
     }
-  }, [fetchUserGoals])
+  }, [activeTab, fetchGroupMembers])
+
+  const generateChallengeCode = async () => {
+    const currentUser = auth().currentUser
+    if (!currentUser) return
+
+    const code = Math.random().toString(36).substring(2, 8).toUpperCase()
+    const groupRef = await firestore().collection("challengeGroups").add({
+      code,
+      name: inputGroupName,
+      createdBy: currentUser.uid,
+      createdAt: firestore.FieldValue.serverTimestamp(),
+    })
+
+    // Get current user data
+    const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
+    const userData = userDoc.data() || {}
+
+    // Update user with new group
+    const currentGroups = userData.challengeGroupIds || []
+
+    // Set as primary group if user doesn't have one
+    if (!userData.challengeGroupId) {
+      await firestore()
+        .collection("users")
+        .doc(currentUser.uid)
+        .update({
+          challengeGroupId: groupRef.id,
+          challengeGroupIds: [...currentGroups, groupRef.id],
+        })
+    } else {
+      // Otherwise add to additional groups
+      await firestore()
+        .collection("users")
+        .doc(currentUser.uid)
+        .update({
+          challengeGroupIds: [...currentGroups, groupRef.id],
+        })
+    }
+
+    setChallengeCode(code)
+    setGroupName(inputGroupName)
+    setUserChallengeGroup(groupRef.id)
+    setActiveTab(groupRef.id)
+
+    // Update local state
+    setUserChallengeGroups((prev) => [...prev, groupRef.id])
+    setGroupsData((prev) => ({
+      ...prev,
+      [groupRef.id]: { name: inputGroupName, code },
+    }))
+
+    // 현재 사용자를 멤버 목록에 즉시 추가
+    if (currentUser) {
+      const currentUserDoc = await firestore().collection("users").doc(currentUser.uid).get()
+      if (currentUserDoc.exists) {
+        const currentUserData = currentUserDoc.data()
+        const newMember: ChallengeMember = {
+          id: currentUser.uid,
+          userId: currentUser.uid,
+          name: currentUserData?.nickname || "Unknown",
+          profileImage: currentUserData?.profileImageUrl || "",
+          totalProgress: 0,
+          goals: [],
+        }
+        setCurrentMonthMembers([newMember])
+
+        // 현재 사용자의 목표 가져오기
+        fetchUserGoals(currentUser.uid)
+      }
+    }
+
+    Clipboard.setString(code)
+    Alert.alert("성공", "챌린지 그룹이 생성되었습니다. 코드가 클립보드에 복사되었습니다.")
+
+    // Fetch the new group's data
+    fetchChallengeGroup()
+  }
+
+  const joinChallengeGroup = async () => {
+    const currentUser = auth().currentUser
+    if (!currentUser) return
+
+    try {
+      const groupSnapshot = await firestore().collection("challengeGroups").where("code", "==", inputCode).get()
+
+      if (groupSnapshot.empty) {
+        Alert.alert("오류", "유효하지 않은 챌린지 그룹 코드입니다.")
+        return
+      }
+
+      const groupDoc = groupSnapshot.docs[0]
+      const groupId = groupDoc.id
+
+      // Get current user data
+      const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
+      const userData = userDoc.data() || {}
+
+      // Check if user is already in this group
+      const currentGroups = userData.challengeGroupIds || []
+      if (currentGroups.includes(groupId) || userData.challengeGroupId === groupId) {
+        Alert.alert("알림", "이미 참여 중인 챌린지 그룹입니다.")
+        return
+      }
+
+      // Update user with new group
+      if (!userData.challengeGroupId) {
+        await firestore()
+          .collection("users")
+          .doc(currentUser.uid)
+          .update({
+            challengeGroupId: groupId,
+            challengeGroupIds: [...currentGroups, groupId],
+          })
+      } else {
+        await firestore()
+          .collection("users")
+          .doc(currentUser.uid)
+          .update({
+            challengeGroupIds: [...currentGroups, groupId],
+          })
+      }
+
+      setUserChallengeGroup(groupId)
+      setChallengeCode(inputCode)
+      setGroupName(groupDoc.data().name || "")
+      setInputCode("")
+      setActiveTab(groupId)
+
+      // Update local state
+      setUserChallengeGroups((prev) => [...prev, groupId])
+      setGroupsData((prev) => ({
+        ...prev,
+        [groupId]: {
+          name: groupDoc.data().name || "",
+          code: inputCode,
+        },
+      }))
+
+      // 그룹 참여 후 데이터 새로고침
+      Alert.alert("성공", "챌린지 그룹에 참여하였습니다.", [
+        {
+          text: "확인",
+          onPress: () => {
+            // 데이터 새로고침
+            fetchChallengeGroup()
+          },
+        },
+      ])
+    } catch (error) {
+      console.error("Error joining challenge group:", error)
+      Alert.alert("오류", "챌린지 그룹 참여 중 문제가 발생했습니다.")
+    }
+  }
+
+  const leaveChallengeGroup = async () => {
+    const currentUser = auth().currentUser
+    if (!currentUser || !activeTab) return
+
+    Alert.alert("챌린지 그룹 나가기", "정말로 이 챌린지 그룹을 나가시겠습니까?", [
+      {
+        text: "취소",
+        style: "cancel",
+      },
+      {
+        text: "나가기",
+        onPress: async () => {
+          try {
+            // Get current user data
+            const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
+            const userData = userDoc.data() || {}
+
+            // Update groups
+            const currentGroups = userData.challengeGroupIds || []
+            const updatedGroups = currentGroups.filter((id: string) => id !== activeTab)
+
+            // If leaving primary group
+            if (userData.challengeGroupId === activeTab) {
+              // Set first remaining group as primary, or null if none left
+              const newPrimaryGroup = updatedGroups.length > 0 ? updatedGroups[0] : null
+
+              await firestore()
+                .collection("users")
+                .doc(currentUser.uid)
+                .update({
+                  challengeGroupId: newPrimaryGroup,
+                  challengeGroupIds: newPrimaryGroup
+                    ? updatedGroups.filter((id: string) => id !== newPrimaryGroup)
+                    : [],
+                })
+            } else {
+              // Just remove from additional groups
+              await firestore().collection("users").doc(currentUser.uid).update({
+                challengeGroupIds: updatedGroups,
+              })
+            }
+
+            // Update local state
+            setUserChallengeGroups((prev) => prev.filter((id: string) => id !== activeTab))
+
+            // Set new active tab
+            const remainingGroups = userChallengeGroups.filter((id: string) => id !== activeTab)
+            if (remainingGroups.length > 0) {
+              setActiveTab(remainingGroups[0])
+            } else {
+              setActiveTab(null)
+              setUserChallengeGroup(null)
+              setChallengeCode(null)
+              setGroupName("")
+              setMembers([])
+              setGoals({})
+              setCertifications({})
+            }
+
+            Alert.alert("성공", "챌린지 그룹에서 나갔습니다.")
+
+            // Refresh data
+            fetchChallengeGroup()
+          } catch (error) {
+            console.error("Error leaving challenge group:", error)
+            Alert.alert("오류", "챌린지 그룹을 나가는 중 오류가 발생했습니다.")
+          }
+        },
+        style: "destructive",
+      },
+    ])
+  }
+
+  const handleTabChange = async (groupId: string | null) => {
+    console.log("Tab changed to:", groupId)
+
+    // 명시적으로 상태 업데이트
+    setActiveTab(groupId)
+
+    // 새 그룹 탭으로 변경할 때 추가 처리
+    if (groupId === null) {
+      console.log("Switching to new group tab")
+      // 그룹 관련 데이터 초기화
+      setChallengeCode(null)
+      setGroupName("")
+      setCurrentMonthMembers([])
+      // 약간의 지연 후 다시 activeTab 상태 확인
+      setTimeout(() => {
+        console.log("Checking activeTab after delay:", activeTab)
+        if (activeTab !== null) {
+          console.log("Forcing activeTab to null")
+          setActiveTab(null)
+        }
+      }, 100)
+      return
+    }
+
+    if (groupId) {
+      // Fetch group data
+      const groupDoc = await firestore().collection("challengeGroups").doc(groupId).get()
+      if (groupDoc.exists) {
+        const groupData = groupDoc.data()
+        setChallengeCode(groupData?.code || null)
+        setGroupName(groupData?.name || "")
+      }
+
+      // Fetch group members
+      await fetchGroupMembers(groupId)
+    }
+  }
 
   useEffect(() => {
     calculateDaysLeft()
@@ -491,7 +854,15 @@ export default function ChallengeScreen() {
         if (didFetchData) return
         didFetchData = true
 
+        // 현재 activeTab 상태 저장
+        const currentActiveTab = activeTab
+
         await fetchChallengeGroup()
+
+        // 사용자가 명시적으로 새 그룹 탭을 선택했다면 activeTab을 null로 복원
+        if (currentActiveTab === null) {
+          setActiveTab(null)
+        }
 
         // 현재 달과 이전 달의 히스토리 데이터 확인
         if (userChallengeGroup && isMounted) {
@@ -554,7 +925,7 @@ export default function ChallengeScreen() {
       return () => {
         isMounted = false
       }
-    }, [fetchChallengeGroup, userChallengeGroup, currentMonth, currentYear]),
+    }, [fetchChallengeGroup, userChallengeGroup, currentMonth, currentYear, activeTab]),
   )
 
   useEffect(() => {
@@ -569,157 +940,18 @@ export default function ChallengeScreen() {
     }
   }, [currentMonth, currentYear, loadMonthData, historicalData])
 
+  useEffect(() => {
+    if (activeTab) {
+      loadMonthData()
+    }
+  }, [activeTab, loadMonthData])
+
   const calculateDaysLeft = () => {
     const today = new Date()
     const lastDay = new Date(today.getFullYear(), currentMonth, 0)
     const diff = lastDay.getDate() - today.getDate()
     setDaysLeft(diff)
   }
-
-  const generateChallengeCode = async () => {
-    const currentUser = auth().currentUser
-    if (!currentUser) return
-
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase()
-    const groupRef = await firestore().collection("challengeGroups").add({
-      code,
-      name: inputGroupName,
-      createdBy: currentUser.uid,
-      createdAt: firestore.FieldValue.serverTimestamp(),
-    })
-
-    await firestore().collection("users").doc(currentUser.uid).update({
-      challengeGroupId: groupRef.id,
-    })
-
-    setChallengeCode(code)
-    setGroupName(inputGroupName)
-    setUserChallengeGroup(groupRef.id)
-    Clipboard.setString(code)
-    Alert.alert("성공", "챌린지 그룹이 생성되었습니다. 코드가 클립보드에 복사되었습니다.")
-  }
-
-  const joinChallengeGroup = async () => {
-    const currentUser = auth().currentUser
-    if (!currentUser) return
-
-    try {
-      const groupSnapshot = await firestore().collection("challengeGroups").where("code", "==", inputCode).get()
-
-      if (groupSnapshot.empty) {
-        Alert.alert("오류", "유효하지 않은 챌린지 그룹 코드입니다.")
-        return
-      }
-
-      const groupDoc = groupSnapshot.docs[0]
-      await firestore().collection("users").doc(currentUser.uid).update({
-        challengeGroupId: groupDoc.id,
-      })
-
-      setUserChallengeGroup(groupDoc.id)
-      setChallengeCode(inputCode)
-      setGroupName(groupDoc.data().name || "")
-      setInputCode("")
-
-      // 그룹 참여 후 데이터 새로고침
-      Alert.alert("성공", "챌린지 그룹에 참여하였습니다.", [
-        {
-          text: "확인",
-          onPress: () => {
-            // 데이터 새로고침
-            fetchChallengeGroup()
-          },
-        },
-      ])
-    } catch (error) {
-      console.error("Error joining challenge group:", error)
-      Alert.alert("오류", "챌린지 그룹 참여 중 문제가 발생했습니다.")
-    }
-  }
-
-  const leaveChallengeGroup = async () => {
-    const currentUser = auth().currentUser
-    if (!currentUser) return
-
-    Alert.alert("챌린지 그룹 나가기", "정말로 이 챌린지 그룹을 나가시겠습니까?", [
-      {
-        text: "취소",
-        style: "cancel",
-      },
-      {
-        text: "나가기",
-        onPress: async () => {
-          try {
-            await firestore().collection("users").doc(currentUser.uid).update({
-              challengeGroupId: null,
-            })
-            setUserChallengeGroup(null)
-            setChallengeCode(null)
-            setGroupName("")
-            setMembers([])
-            setGoals({})
-            setCertifications({})
-            Alert.alert("성공", "챌린지 그룹에서 나갔습니다.")
-          } catch (error) {
-            console.error("Error leaving challenge group:", error)
-            Alert.alert("오류", "챌린지 그룹을 나가는 중 오류가 발생했습니다.")
-          }
-        },
-        style: "destructive",
-      },
-    ])
-  }
-
-  useEffect(() => {
-    // 달의 마지막 날 12:00에 랭킹 정보 저장 타이머 설정
-    if (!userChallengeGroup) return
-
-    let timer: NodeJS.Timeout | null = null
-
-    const setupTimer = () => {
-      const now = new Date()
-      const lastDayOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0)
-      const isLastDayOfMonth = now.getDate() === lastDayOfMonth.getDate()
-
-      // 오늘이 달의 마지막 날이면 12:00에 저장하는 타이머 설정
-      if (isLastDayOfMonth) {
-        const currentHour = now.getHours()
-
-        if (currentHour < 12) {
-          // 12시까지 남은 시간 계산 (밀리초)
-          const targetTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0)
-          const timeUntilTarget = targetTime.getTime() - now.getTime()
-
-          console.log(
-            `Setting timer to save challenge history at 12:00, ${timeUntilTarget / 1000 / 60} minutes remaining`,
-          )
-
-          timer = setTimeout(() => {
-            console.log("Timer triggered: Saving challenge history for current month")
-            const currentDate = new Date()
-            const year = currentDate.getFullYear()
-            const month = currentDate.getMonth() + 1
-            saveChallengeHistory(year, month).catch(console.error)
-          }, timeUntilTarget)
-        } else if (currentHour === 12) {
-          // 현재 시간이 정확히 12시인 경우 바로 저장
-          console.log("Current time is 12:00, saving challenge history now")
-          const currentDate = new Date()
-          const year = currentDate.getFullYear()
-          const month = currentDate.getMonth() + 1
-          saveChallengeHistory(year, month).catch(console.error)
-        }
-      }
-    }
-
-    setupTimer()
-
-    return () => {
-      if (timer) {
-        clearTimeout(timer)
-      }
-    }
-  }, [userChallengeGroup, saveChallengeHistory])
 
   const currentUserAuth = auth().currentUser
   useEffect(() => {
@@ -810,7 +1042,7 @@ export default function ChallengeScreen() {
                 style={styles.monthButton}
               >
                 <Text style={[styles.monthNumber, styles.pastMonth]}>
-                  {String(currentMonth === 1 ? 12 : currentMonth - 1).padStart(2, "0")}
+                  {currentMonth === 1 ? 12 : currentMonth - 1}월
                 </Text>
               </TouchableOpacity>
             </View>
@@ -823,7 +1055,10 @@ export default function ChallengeScreen() {
                   fill="#387aff"
                 />
               </Svg>
-              <Text style={[styles.monthNumber, styles.activeMonth]}>{String(currentMonth).padStart(2, "0")}</Text>
+              <View style={styles.currentMonthContent}>
+                <Text style={[styles.monthNumber, styles.activeMonth]}>{currentMonth}월</Text>
+                {isCurrentMonth && <Text style={styles.daysLeftInMonth}>{daysLeft}일 남음</Text>}
+              </View>
             </View>
             <View style={styles.monthContainer}>
               <Svg width={80} height={97} viewBox="0 0 120 146" style={[styles.challengeIcon, styles.smallIcon]}>
@@ -846,16 +1081,41 @@ export default function ChallengeScreen() {
                     isFutureMonth(currentMonth === 12 ? 1 : currentMonth + 1) ? styles.futureMonth : styles.pastMonth,
                   ]}
                 >
-                  {String(currentMonth === 12 ? 1 : currentMonth + 1).padStart(2, "0")}
+                  {currentMonth === 12 ? 1 : currentMonth + 1}월
                 </Text>
               </TouchableOpacity>
             </View>
           </View>
-          <Text style={styles.challengeTitle}>{currentMonth}월 챌린지</Text>
-          {isCurrentMonth && <Text style={styles.daysLeft}>{daysLeft}일 남음</Text>}
         </View>
 
-        {!userChallengeGroup ? (
+        {/* Tab Navigation */}
+        <View style={styles.tabContainer}>
+          <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScrollContent}>
+            {/* New Group Tab */}
+            <TouchableOpacity
+              style={[styles.tabItem, activeTab === null && styles.activeTabItem]}
+              onPress={() => handleTabChange(null)}
+            >
+              <Text style={[styles.tabText, activeTab === null && styles.activeTabText]}>+ 새 그룹</Text>
+            </TouchableOpacity>
+
+            {/* Group Tabs */}
+            {userChallengeGroups.map((groupId) => (
+              <TouchableOpacity
+                key={groupId}
+                style={[styles.tabItem, activeTab === groupId && styles.activeTabItem]}
+                onPress={() => handleTabChange(groupId)}
+              >
+                <Text style={[styles.tabText, activeTab === groupId && styles.activeTabText]}>
+                  {groupsData[groupId]?.name || "그룹"}
+                </Text>
+              </TouchableOpacity>
+            ))}
+          </ScrollView>
+        </View>
+
+        {/* Content based on active tab */}
+        {activeTab === null ? (
           <View style={styles.joinContainer}>
             <View style={styles.inputButtonRow}>
               <TextInput
@@ -905,9 +1165,7 @@ export default function ChallengeScreen() {
                       }}
                     >
                       <View style={styles.rankInfo}>
-                        <Text style={[styles.rankNumber, isCurrentUser && styles.currentUserRank]}>
-                          {"rank" in member && member.rank !== undefined ? member.rank : "-"}
-                        </Text>
+                        <Text style={[styles.rankNumber, isCurrentUser && styles.currentUserRank]}>{member.rank}</Text>
                         <RNImage
                           source={
                             member.profileImage
@@ -939,21 +1197,22 @@ export default function ChallengeScreen() {
         )}
       </ScrollView>
 
-      {userChallengeGroup && (isCurrentMonth || isPastMonth) && (
+      {activeTab && (isCurrentMonth || isPastMonth) && (
         <View style={styles.bottomButtonContainer}>
           <TouchableOpacity
             style={styles.copyButton}
             onPress={() => {
-              if (challengeCode) {
-                Clipboard.setString(challengeCode)
+              const groupCode = groupsData[activeTab]?.code
+              if (groupCode) {
+                Clipboard.setString(groupCode)
                 Alert.alert("성공", "챌린지 그룹 코드가 클립보드에 복사되었습니다.")
               }
             }}
           >
-            <Text style={styles.copyButtonText}>{groupName} 코드 복사</Text>
+            <Text style={styles.copyButtonText}>{groupsData[activeTab]?.name || "그룹"} 초대 코드</Text>
           </TouchableOpacity>
           <TouchableOpacity style={styles.leaveButton} onPress={leaveChallengeGroup}>
-            <Text style={styles.leaveButtonText}>그룹 나가기</Text>
+            <Text style={styles.leaveButtonText}>나가기</Text>
           </TouchableOpacity>
         </View>
       )}
@@ -996,6 +1255,10 @@ const styles = StyleSheet.create({
     width: 120,
     height: 146,
   },
+  currentMonthContent: {
+    alignItems: "center",
+    justifyContent: "center",
+  },
   challengeIcon: {
     position: "absolute",
     zIndex: -1,
@@ -1016,18 +1279,23 @@ const styles = StyleSheet.create({
   },
   pastMonth: {
     color: "#ABC6FB",
-    fontSize: 30,
+    fontSize: 24,
     fontFamily: "MungyeongGamhongApple",
   },
   futureMonth: {
     color: "#BEBEBE",
-    fontSize: 30,
+    fontSize: 24,
     fontFamily: "MungyeongGamhongApple",
   },
   activeMonth: {
     color: "#ffffff",
-    fontSize: 40,
+    fontSize: 36,
     fontFamily: "MungyeongGamhongApple",
+  },
+  daysLeftInMonth: {
+    color: "#ffffff",
+    fontSize: 16,
+    marginTop: 8,
   },
   challengeTitle: {
     fontSize: 24,
@@ -1200,6 +1468,32 @@ const styles = StyleSheet.create({
     fontSize: 16,
     color: "#767676",
     textAlign: "center",
+  },
+  tabContainer: {
+    marginBottom: 15,
+    position: "relative",
+  },
+  tabScrollContent: {
+    paddingHorizontal: 10,
+    paddingBottom: 12,
+  },
+  tabItem: {
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    marginRight: 10,
+  },
+  activeTabItem: {
+    backgroundColor: "#dde7ff",
+    borderRadius: 8,
+  },
+  tabText: {
+    fontSize: 16,
+    fontWeight: "500",
+    color: "#767676",
+  },
+  activeTabText: {
+    color: "#387aff",
+    fontWeight: "bold",
   },
 })
 

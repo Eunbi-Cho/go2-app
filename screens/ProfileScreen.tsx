@@ -48,7 +48,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
   updateUserProfile,
 }) => {
   const [goals, setGoals] = useState<Goal[]>([])
-  const MAX_GOALS = 4
+  const MAX_GOALS = 6
   const [refreshing, setRefreshing] = useState(false)
   const [showAndroidModal, setShowAndroidModal] = useState(false)
   const [selectedGoal, setSelectedGoal] = useState<Goal | null>(null)
@@ -451,7 +451,7 @@ const ProfileScreen: React.FC<ProfileScreenProps> = ({
       >
         <Text style={styles.addButtonText}>
           {goals.length >= MAX_GOALS
-            ? "목표는 최대 4개까지 추가 가능해요"
+            ? "목표는 최대 6개까지 추가 가능해요"
             : `이번달 목표 추가 (${goals.length}/${MAX_GOALS})`}
         </Text>
       </TouchableOpacity>
