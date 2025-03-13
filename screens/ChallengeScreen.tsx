@@ -44,7 +44,7 @@ export default function ChallengeScreen() {
   const [users, setUsers] = useState<{ [userId: string]: User }>({})
   const [userChallengeGroups, setUserChallengeGroups] = useState<string[]>([])
   const [groupsData, setGroupsData] = useState<{ [groupId: string]: { name: string; code: string } }>({})
-  const [activeTab, setActiveTab] = useState<string | null>(null)
+  const [activeTab, setActiveTab] = useState<string | null | undefined>(undefined)
 
   const calculateTotalProgress = useCallback(
     (userGoals: Goal[], userId: string, year: number, month: number) => {
@@ -166,7 +166,7 @@ export default function ChallengeScreen() {
 
   const saveChallengeHistory = useCallback(
     async (yearToSave: number, monthToSave: number) => {
-      if (!userChallengeGroup) return
+      if (!activeTab) return
 
       // 이미 저장된 히스토리가 있는지 확인
       const historyKey = `${yearToSave}-${monthToSave}`
@@ -200,7 +200,7 @@ export default function ChallengeScreen() {
         // 이미 저장된 히스토리가 있는지 확인
         const existingHistorySnapshot = await firestore()
           .collection("challengeHistory")
-          .where("groupId", "==", userChallengeGroup)
+          .where("groupId", "==", activeTab)
           .where("year", "==", yearToSave)
           .where("month", "==", monthToSave)
           .get()
@@ -217,7 +217,7 @@ export default function ChallengeScreen() {
         } else {
           console.log(`Creating new history for ${yearToSave}-${monthToSave}`)
           const historyData: Omit<ChallengeHistory, "id"> = {
-            groupId: userChallengeGroup,
+            groupId: activeTab,
             year: yearToSave,
             month: monthToSave,
             members: rankedMembers,
@@ -233,7 +233,7 @@ export default function ChallengeScreen() {
           ...prevData,
           [`${yearToSave}-${monthToSave}`]: {
             id: historyId,
-            groupId: userChallengeGroup,
+            groupId: activeTab,
             year: yearToSave,
             month: monthToSave,
             members: rankedMembers,
@@ -246,11 +246,11 @@ export default function ChallengeScreen() {
         console.error(`Error saving challenge history for ${yearToSave}-${monthToSave}:`, error)
       }
     },
-    [userChallengeGroup, currentMonthMembers, goals, calculateTotalProgress, historicalData],
+    [activeTab, currentMonthMembers, goals, calculateTotalProgress, historicalData],
   )
 
   const loadMonthData = useCallback(async () => {
-    if (!userChallengeGroup) return
+    if (!activeTab) return
 
     console.log(`Loading data for ${currentYear}-${currentMonth}`)
 
@@ -276,7 +276,7 @@ export default function ChallengeScreen() {
 
         const historySnapshot = await firestore()
           .collection("challengeHistory")
-          .where("groupId", "==", userChallengeGroup)
+          .where("groupId", "==", activeTab)
           .where("year", "==", currentYear)
           .where("month", "==", currentMonth)
           .get()
@@ -300,7 +300,7 @@ export default function ChallengeScreen() {
           // 그룹의 모든 멤버 ID 가져오기
           const membersSnapshot = await firestore()
             .collection("users")
-            .where("challengeGroupId", "==", userChallengeGroup)
+            .where("challengeGroupId", "array-contains", activeTab)
             .get()
 
           const memberIds = membersSnapshot.docs.map((doc) => doc.id)
@@ -358,7 +358,7 @@ export default function ChallengeScreen() {
       }
     }
   }, [
-    userChallengeGroup,
+    activeTab,
     currentYear,
     currentMonth,
     updateMemberProgress,
@@ -394,22 +394,24 @@ export default function ChallengeScreen() {
       if (!groupId) return
 
       try {
-        // 그룹 멤버 가져오기 - 주 그룹이 해당 그룹인 사용자와 추가 그룹에 해당 그룹이 있는 사용자 모두 가져오기
-        const primaryMembersSnapshot = await firestore()
+        // 그룹 멤버 가져오기 - challengeGroupId가 문자열인 경우
+        const stringMembersSnapshot = await firestore()
           .collection("users")
           .where("challengeGroupId", "==", groupId)
           .get()
-        const additionalMembersSnapshot = await firestore()
+
+        // 그룹 멤버 가져오기 - challengeGroupId가 배열인 경우
+        const arrayMembersSnapshot = await firestore()
           .collection("users")
-          .where("challengeGroupIds", "array-contains", groupId)
+          .where("challengeGroupId", "array-contains", groupId)
           .get()
 
         // 중복 제거를 위한 Set
         const memberIds = new Set<string>()
         const membersData: ChallengeMember[] = []
 
-        // 주 그룹 멤버 처리
-        primaryMembersSnapshot.docs.forEach((doc) => {
+        // 문자열 타입 멤버 처리
+        stringMembersSnapshot.docs.forEach((doc) => {
           if (!memberIds.has(doc.id)) {
             memberIds.add(doc.id)
             const memberData = doc.data()
@@ -424,8 +426,8 @@ export default function ChallengeScreen() {
           }
         })
 
-        // 추가 그룹 멤버 처리
-        additionalMembersSnapshot.docs.forEach((doc) => {
+        // 배열 타입 멤버 처리
+        arrayMembersSnapshot.docs.forEach((doc) => {
           if (!memberIds.has(doc.id)) {
             memberIds.add(doc.id)
             const memberData = doc.data()
@@ -504,30 +506,40 @@ export default function ChallengeScreen() {
     try {
       const userDoc = await firestore().collection("users").doc(currentUserAuth.uid).get()
       const userData = userDoc.data()
-      const groupId = userData?.challengeGroupId
-      const groupIds = userData?.challengeGroupIds || []
 
-      // Combine primary group and additional groups
-      const allGroupIds = groupId ? [groupId, ...groupIds.filter((id: string) => id !== groupId)] : groupIds
+      // 호환성을 위해 challengeGroupId 필드 처리
+      let userGroups: string[] = []
 
-      setUserChallengeGroups(allGroupIds)
+      // 기존 사용자의 경우 challengeGroupId가 문자열일 수 있음
+      if (userData?.challengeGroupId) {
+        if (typeof userData.challengeGroupId === "string") {
+          // 문자열인 경우 배열에 추가
+          userGroups.push(userData.challengeGroupId)
+        } else if (Array.isArray(userData.challengeGroupId)) {
+          // 이미 배열인 경우 그대로 사용
+          userGroups = userData.challengeGroupId
+        }
+      }
+
+      setUserChallengeGroups(userGroups)
 
       // Set active tab to the first group or null if no groups
       // 사용자가 명시적으로 새 그룹 탭을 선택한 경우를 처리하기 위해 조건을 수정
-      const userSelectedNewGroupTab = activeTab === null && userChallengeGroups.length > 0
-      if (allGroupIds.length > 0 && !activeTab && !userSelectedNewGroupTab) {
-        setActiveTab(allGroupIds[0])
-      } else if (allGroupIds.length === 0) {
+      // 초기 로딩 시에만 첫 번째 그룹을 선택합니다 (activeTab이 undefined일 때)
+      if (userGroups.length > 0 && activeTab === undefined) {
+        setActiveTab(userGroups[0])
+      } else if (userGroups.length === 0) {
+        // 그룹이 없는 경우 새 그룹 탭으로 설정
         setActiveTab(null)
       }
-      // 사용자가 명시적으로 새 그룹 탭을 선택한 경우 activeTab을 null로 유지
+      // 사용자가 명시적으로 탭을 선택한 경우 (activeTab이 null 또는 string) 그대로 유지
 
       // Set primary group for backward compatibility
-      if (groupId) {
-        setUserChallengeGroup(groupId)
+      if (userGroups.length > 0) {
+        setUserChallengeGroup(userGroups[0])
 
         // 그룹 정보 가져오기
-        const groupDoc = await firestore().collection("challengeGroups").doc(groupId).get()
+        const groupDoc = await firestore().collection("challengeGroups").doc(userGroups[0]).get()
         if (groupDoc.exists) {
           const groupData = groupDoc.data()
           setChallengeCode(groupData?.code || null)
@@ -546,7 +558,7 @@ export default function ChallengeScreen() {
       const groupsInfo: { [groupId: string]: { name: string; code: string } } = {}
 
       await Promise.all(
-        allGroupIds.map(async (gId: string) => {
+        userGroups.map(async (gId: string) => {
           const groupDoc = await firestore().collection("challengeGroups").doc(gId).get()
           if (groupDoc.exists) {
             const groupData = groupDoc.data()
@@ -561,10 +573,10 @@ export default function ChallengeScreen() {
       setGroupsData(groupsInfo)
 
       // If we have an active tab, fetch members for that group
-      if (activeTab && allGroupIds.includes(activeTab)) {
+      if (activeTab && userGroups.includes(activeTab)) {
         await fetchGroupMembers(activeTab)
-      } else if (allGroupIds.length > 0) {
-        await fetchGroupMembers(allGroupIds[0])
+      } else if (userGroups.length > 0) {
+        await fetchGroupMembers(userGroups[0])
       } else {
         setCurrentMonthMembers([])
       }
@@ -593,27 +605,26 @@ export default function ChallengeScreen() {
     const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
     const userData = userDoc.data() || {}
 
-    // Update user with new group
-    const currentGroups = userData.challengeGroupIds || []
+    // 기존 challengeGroupId 필드 처리
+    let currentGroupIds: string[] = []
 
-    // Set as primary group if user doesn't have one
-    if (!userData.challengeGroupId) {
-      await firestore()
-        .collection("users")
-        .doc(currentUser.uid)
-        .update({
-          challengeGroupId: groupRef.id,
-          challengeGroupIds: [...currentGroups, groupRef.id],
-        })
-    } else {
-      // Otherwise add to additional groups
-      await firestore()
-        .collection("users")
-        .doc(currentUser.uid)
-        .update({
-          challengeGroupIds: [...currentGroups, groupRef.id],
-        })
+    if (userData.challengeGroupId) {
+      if (typeof userData.challengeGroupId === "string") {
+        // 문자열인 경우 배열로 변환
+        currentGroupIds = [userData.challengeGroupId]
+      } else if (Array.isArray(userData.challengeGroupId)) {
+        // 이미 배열인 경우 그대로 사용
+        currentGroupIds = userData.challengeGroupId
+      }
     }
+
+    // 새 그룹 추가
+    currentGroupIds.push(groupRef.id)
+
+    // 사용자 문서 업데이트
+    await firestore().collection("users").doc(currentUser.uid).update({
+      challengeGroupId: currentGroupIds,
+    })
 
     setChallengeCode(code)
     setGroupName(inputGroupName)
@@ -673,30 +684,32 @@ export default function ChallengeScreen() {
       const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
       const userData = userDoc.data() || {}
 
+      // 기존 challengeGroupId 필드 처리
+      let currentGroupIds: string[] = []
+
+      if (userData.challengeGroupId) {
+        if (typeof userData.challengeGroupId === "string") {
+          // 문자열인 경우 배열로 변환
+          currentGroupIds = [userData.challengeGroupId]
+        } else if (Array.isArray(userData.challengeGroupId)) {
+          // 이미 배열인 경우 그대로 사용
+          currentGroupIds = userData.challengeGroupId
+        }
+      }
+
       // Check if user is already in this group
-      const currentGroups = userData.challengeGroupIds || []
-      if (currentGroups.includes(groupId) || userData.challengeGroupId === groupId) {
+      if (currentGroupIds.includes(groupId)) {
         Alert.alert("알림", "이미 참여 중인 챌린지 그룹입니다.")
         return
       }
 
-      // Update user with new group
-      if (!userData.challengeGroupId) {
-        await firestore()
-          .collection("users")
-          .doc(currentUser.uid)
-          .update({
-            challengeGroupId: groupId,
-            challengeGroupIds: [...currentGroups, groupId],
-          })
-      } else {
-        await firestore()
-          .collection("users")
-          .doc(currentUser.uid)
-          .update({
-            challengeGroupIds: [...currentGroups, groupId],
-          })
-      }
+      // 새 그룹 추가
+      currentGroupIds.push(groupId)
+
+      // 사용자 문서 업데이트
+      await firestore().collection("users").doc(currentUser.uid).update({
+        challengeGroupId: currentGroupIds,
+      })
 
       setUserChallengeGroup(groupId)
       setChallengeCode(inputCode)
@@ -714,16 +727,11 @@ export default function ChallengeScreen() {
         },
       }))
 
-      // 그룹 참여 후 데이터 새로고침
-      Alert.alert("성공", "챌린지 그룹에 참여하였습니다.", [
-        {
-          text: "확인",
-          onPress: () => {
-            // 데이터 새로고침
-            fetchChallengeGroup()
-          },
-        },
-      ])
+      // 그룹 참여 후 즉시 멤버 데이터 가져오기
+      await fetchGroupMembers(groupId)
+
+      // 데이터 새로고침 알림
+      Alert.alert("성공", "챌린지 그룹에 참여하였습니다.")
     } catch (error) {
       console.error("Error joining challenge group:", error)
       Alert.alert("오류", "챌린지 그룹 참여 중 문제가 발생했습니다.")
@@ -747,30 +755,26 @@ export default function ChallengeScreen() {
             const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
             const userData = userDoc.data() || {}
 
-            // Update groups
-            const currentGroups = userData.challengeGroupIds || []
-            const updatedGroups = currentGroups.filter((id: string) => id !== activeTab)
+            // 기존 challengeGroupId 필드 처리
+            let currentGroupIds: string[] = []
 
-            // If leaving primary group
-            if (userData.challengeGroupId === activeTab) {
-              // Set first remaining group as primary, or null if none left
-              const newPrimaryGroup = updatedGroups.length > 0 ? updatedGroups[0] : null
-
-              await firestore()
-                .collection("users")
-                .doc(currentUser.uid)
-                .update({
-                  challengeGroupId: newPrimaryGroup,
-                  challengeGroupIds: newPrimaryGroup
-                    ? updatedGroups.filter((id: string) => id !== newPrimaryGroup)
-                    : [],
-                })
-            } else {
-              // Just remove from additional groups
-              await firestore().collection("users").doc(currentUser.uid).update({
-                challengeGroupIds: updatedGroups,
-              })
+            if (userData.challengeGroupId) {
+              if (typeof userData.challengeGroupId === "string") {
+                // 문자열인 경우 배열로 변환
+                currentGroupIds = [userData.challengeGroupId]
+              } else if (Array.isArray(userData.challengeGroupId)) {
+                // 이미 배열인 경우 그대로 사용
+                currentGroupIds = userData.challengeGroupId
+              }
             }
+
+            // 그룹 제거
+            const updatedGroups = currentGroupIds.filter((id: string) => id !== activeTab)
+
+            // 사용자 문서 업데이트
+            await firestore().collection("users").doc(currentUser.uid).update({
+              challengeGroupId: updatedGroups,
+            })
 
             // Update local state
             setUserChallengeGroups((prev) => prev.filter((id: string) => id !== activeTab))
@@ -860,12 +864,12 @@ export default function ChallengeScreen() {
         await fetchChallengeGroup()
 
         // 사용자가 명시적으로 새 그룹 탭을 선택했다면 activeTab을 null로 복원
-        if (currentActiveTab === null) {
-          setActiveTab(null)
+        if (currentActiveTab !== undefined) {
+          setActiveTab(currentActiveTab)
         }
 
         // 현재 달과 이전 달의 히스토리 데이터 확인
-        if (userChallengeGroup && isMounted) {
+        if (activeTab && isMounted) {
           const now = new Date()
           const currentMonthNum = now.getMonth() + 1
           const currentYearNum = now.getFullYear()
@@ -881,7 +885,7 @@ export default function ChallengeScreen() {
           // 이전 달의 히스토리 데이터 확인
           const snapshot = await firestore()
             .collection("challengeHistory")
-            .where("groupId", "==", userChallengeGroup)
+            .where("groupId", "==", activeTab)
             .where("year", "==", prevYear)
             .where("month", "==", prevMonth)
             .get()
@@ -925,7 +929,7 @@ export default function ChallengeScreen() {
       return () => {
         isMounted = false
       }
-    }, [fetchChallengeGroup, userChallengeGroup, currentMonth, currentYear, activeTab]),
+    }, [fetchChallengeGroup, activeTab, currentMonth, currentYear]),
   )
 
   useEffect(() => {

@@ -56,6 +56,7 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
         kakaoId: profile.id,
         loginType: loginType,
         friends: [],
+        challengeGroupId: [], // 빈 배열로 초기화
         createdAt: firestore.FieldValue.serverTimestamp(),
       }
 
@@ -118,6 +119,17 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           const userDoc = await firestore().collection("users").doc(user.uid).get()
           if (userDoc.exists) {
             const userData = userDoc.data()
+
+            // challengeGroupId 필드가 문자열인 경우 배열로 변환
+            if (userData?.challengeGroupId && typeof userData.challengeGroupId === "string") {
+              await firestore()
+                .collection("users")
+                .doc(user.uid)
+                .update({
+                  challengeGroupId: [userData.challengeGroupId],
+                })
+            }
+
             onLoginSuccess({
               nickname: userData?.nickname || "Unknown",
               profileImageUrl: userData?.profileImageUrl || require("../assets/default-profile-image.png"),
@@ -241,10 +253,22 @@ const LoginScreen: React.FC<LoginScreenProps> = ({ onLoginSuccess }) => {
           nickname: userName,
           profileImageUrl: user.photoURL || defaultProfileImage,
           loginType: "apple",
+          challengeGroupId: [], // 빈 배열로 초기화
           createdAt: firestore.FieldValue.serverTimestamp(),
         }
         await firestore().collection("users").doc(user.uid).set(userData)
         userDoc = await firestore().collection("users").doc(user.uid).get()
+      } else {
+        // 기존 사용자의 challengeGroupId 필드가 문자열인 경우
+        const userData = userDoc.data()
+        if (userData?.challengeGroupId && typeof userData.challengeGroupId === "string") {
+          await firestore()
+            .collection("users")
+            .doc(user.uid)
+            .update({
+              challengeGroupId: [userData.challengeGroupId],
+            })
+        }
       }
 
       const userData = userDoc.data()

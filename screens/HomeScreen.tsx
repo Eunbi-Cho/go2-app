@@ -27,7 +27,6 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
   const [uploadingCertification, setUploadingCertification] = useState<Certification | null>(null)
   const [users, setUsers] = useState<{ [key: string]: User }>({})
   const [currentUser, setCurrentUser] = useState<User | null>(null)
-  const [userChallengeGroup, setUserChallengeGroup] = useState<string | null>(null)
   const [groupGoals, setGroupGoals] = useState<{ [userId: string]: Goal[] }>({})
 
   useEffect(() => {
@@ -77,11 +76,23 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
 
       console.log("Fetching certifications for date range:", today, "to", tomorrow)
 
-      // Fetch user's challenge group
+      // Fetch user's challenge groups
       const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
       const userData = userDoc.data()
-      const groupId = userData?.challengeGroupId
-      setUserChallengeGroup(groupId)
+
+      // 호환성을 위해 challengeGroupId 필드 처리
+      let userGroups: string[] = []
+
+      // 기존 사용자의 경우 challengeGroupId가 문자열일 수 있음
+      if (userData?.challengeGroupId) {
+        if (typeof userData.challengeGroupId === "string") {
+          // 문자열인 경우 배열에 추가
+          userGroups.push(userData.challengeGroupId)
+        } else if (Array.isArray(userData.challengeGroupId)) {
+          // 이미 배열인 경우 그대로 사용
+          userGroups = userData.challengeGroupId
+        }
+      }
 
       // 현재 사용자 정보 로드
       const currentUserDoc = await firestore().collection("users").doc(currentUser.uid).get()
@@ -99,77 +110,99 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
 
       let memberIds: string[] = [currentUser.uid]
 
-      if (groupId) {
-        console.log("User's challenge group ID:", groupId)
-        // Fetch group members
-        const membersSnapshot = await firestore().collection("users").where("challengeGroupId", "==", groupId).get()
-        memberIds = membersSnapshot.docs.map((doc) => doc.id)
-        console.log("Group member IDs:", memberIds)
+      if (userGroups.length > 0) {
+        console.log("User's challenge group IDs:", userGroups)
+
+        // 모든 그룹의 멤버 수집
+        const allMembers = new Set<string>()
+        allMembers.add(currentUser.uid) // 현재 사용자 추가
+
+        // 각 그룹의 멤버 가져오기
+        for (const groupId of userGroups) {
+          // 그룹 멤버 가져오기 - challengeGroupId가 문자열인 경우
+          const stringMembersSnapshot = await firestore()
+            .collection("users")
+            .where("challengeGroupId", "==", groupId)
+            .get()
+
+          stringMembersSnapshot.docs.forEach((doc) => {
+            allMembers.add(doc.id)
+          })
+
+          // 그룹 멤버 가져오기 - challengeGroupId가 배열인 경우
+          const arrayMembersSnapshot = await firestore()
+            .collection("users")
+            .where("challengeGroupId", "array-contains", groupId)
+            .get()
+
+          arrayMembersSnapshot.docs.forEach((doc) => {
+            allMembers.add(doc.id)
+          })
+        }
+
+        memberIds = Array.from(allMembers)
+        console.log("All group members IDs:", memberIds)
 
         if (memberIds.length > 0) {
-          certificationsQuery = certificationsQuery.where("userId", "in", memberIds)
+          // Firestore에는 "in" 쿼리에 최대 10개의 값만 허용
+          // 멤버가 10명 이상이면 여러 쿼리로 나누어 실행해야 함
+          if (memberIds.length <= 10) {
+            certificationsQuery = certificationsQuery.where("userId", "in", memberIds)
+          } else {
+            // 10명씩 나누어 쿼리 실행
+            const certificationBatches = []
+
+            // 10명씩 나누어 쿼리 실행
+            for (let i = 0; i < memberIds.length; i += 10) {
+              const batchMemberIds = memberIds.slice(i, i + 10)
+              const batchQuery = firestore()
+                .collection("certifications")
+                .where("userId", "in", batchMemberIds)
+                .where("timestamp", ">=", today)
+                .where("timestamp", "<", tomorrow)
+                .orderBy("timestamp", "desc")
+
+              certificationBatches.push(batchQuery.get())
+            }
+
+            // 모든 쿼리 결과 합치기
+            const batchResults = await Promise.all(certificationBatches)
+            const allCertifications = batchResults.flatMap((batch) =>
+              batch.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Certification),
+            )
+
+            // 인증샷 데이터 설정
+            console.log(`Found ${allCertifications.length} certifications from all batches`)
+
+            // 사용자 정보와 목표 정보 가져오기
+            await fetchUsersAndGoals(memberIds)
+
+            setUserCertifications(allCertifications)
+            setIsLoading(false)
+            return
+          }
         } else {
-          console.log("No members found in the group")
+          console.log("No members found in any groups")
           certificationsQuery = certificationsQuery.where("userId", "==", currentUser.uid)
         }
 
         // Fetch users data
-        const usersData: { [key: string]: User } = {}
-        await Promise.all(
-          memberIds.map(async (userId) => {
-            const userDoc = await firestore().collection("users").doc(userId).get()
-            if (userDoc.exists) {
-              const userData = userDoc.data()
-              usersData[userId] = {
-                id: userId,
-                ...userData,
-                profileImageUrl: userData?.profileImageUrl || null,
-              } as User
-            }
-          }),
-        )
-        setUsers(usersData)
-        console.log("Updated users data:", usersData)
+        await fetchUsersAndGoals(memberIds)
       } else {
-        console.log("User is not in a challenge group")
+        console.log("User is not in any challenge groups")
         certificationsQuery = certificationsQuery.where("userId", "==", currentUser.uid)
       }
 
       const certificationsSnapshot = await certificationsQuery.get()
       console.log("Certifications found:", certificationsSnapshot.size)
 
-      // Fetch group members' goals
-      const groupGoals: { [userId: string]: Goal[] } = {}
-
-      if (memberIds.length > 0) {
-        const groupGoalsSnapshot = await firestore().collection("goals").where("userId", "in", memberIds).get()
-        groupGoalsSnapshot.docs.forEach((doc) => {
-          const goal = { id: doc.id, ...doc.data() } as Goal
-          if (!groupGoals[goal.userId]) {
-            groupGoals[goal.userId] = []
-          }
-          groupGoals[goal.userId].push(goal)
-        })
-      }
-      setGroupGoals(groupGoals)
-
       const certificationsData = certificationsSnapshot.docs.map((doc) => ({
         id: doc.id,
         ...doc.data(),
       })) as Certification[]
 
-      // 현재 사용자의 인증샷 중 삭제된 목표의 인증샷을 필터링합니다.
-      const filteredCertifications = certificationsData.filter((cert) => {
-        if (cert.userId === currentUser.uid) {
-          // 현재 사용자의 인증샷인 경우, 해당 목표가 존재하는지 확인
-          return userGoals.some((goal) => goal.id === cert.goalId)
-        }
-        // 다른 사용자의 인증샷은 해당 사용자의 현재 목표와 일치하는지 확인
-        return groupGoals[cert.userId]?.some((goal) => goal.id === cert.goalId)
-      })
-
-      console.log("Filtered certifications:", filteredCertifications.length)
-      setUserCertifications(filteredCertifications)
+      // 모든 인증샷을 표시하도록 필터링 로직 수정
+      setUserCertifications(certificationsData)
     } catch (error) {
       console.error("Error fetching certifications:", error)
       // 오류 발생 시 빈 배열로 설정
@@ -179,6 +212,53 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
       setIsLoading(false)
     }
   }, [])
+
+  // 사용자 정보와 목표 정보 가져오기
+  const fetchUsersAndGoals = async (memberIds: string[]) => {
+    // 사용자 정보 가져오기
+    const usersData: { [key: string]: User } = {}
+    await Promise.all(
+      memberIds.map(async (userId) => {
+        try {
+          const userDoc = await firestore().collection("users").doc(userId).get()
+          if (userDoc.exists) {
+            const userData = userDoc.data()
+            usersData[userId] = {
+              id: userId,
+              ...userData,
+              profileImageUrl: userData?.profileImageUrl || null,
+            } as User
+          }
+        } catch (error) {
+          console.error(`Error fetching user data for ${userId}:`, error)
+        }
+      }),
+    )
+    setUsers(usersData)
+
+    // 목표 정보 가져오기
+    try {
+      // 한 번에 최대 10명의 사용자 목표만 가져올 수 있으므로 배치 처리
+      const goalsData: { [userId: string]: Goal[] } = {}
+
+      for (let i = 0; i < memberIds.length; i += 10) {
+        const batchMemberIds = memberIds.slice(i, Math.min(i + 10, memberIds.length))
+        const groupGoalsSnapshot = await firestore().collection("goals").where("userId", "in", batchMemberIds).get()
+
+        groupGoalsSnapshot.docs.forEach((doc) => {
+          const goal = { id: doc.id, ...doc.data() } as Goal
+          if (!goalsData[goal.userId]) {
+            goalsData[goal.userId] = []
+          }
+          goalsData[goal.userId].push(goal)
+        })
+      }
+
+      setGroupGoals(goalsData)
+    } catch (error) {
+      console.error("Error fetching goals:", error)
+    }
+  }
 
   useFocusEffect(
     useCallback(() => {
@@ -310,11 +390,20 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
   }
 
   const renderCertifications = (certifications: Certification[]) => {
-    console.log(`Rendering certifications:`, certifications)
+    console.log(`Rendering certifications:`, certifications.length)
+
+    if (certifications.length === 0) {
+      return (
+        <View style={styles.emptyStateContainer}>
+          <Text style={styles.emptyStateText}>오늘 인증된 목표가 없습니다</Text>
+        </View>
+      )
+    }
+
     return (
       <>
         {certifications.map((cert) => {
-          console.log(`Rendering certification:`, cert)
+          console.log(`Rendering certification:`, cert.id, cert.userId)
           const userGoals = groupGoals[cert.userId] || []
           const certGoal =
             userGoals.find((g) => g.id === cert.goalId) ||
@@ -322,7 +411,7 @@ export default function HomeScreen({ navigation }: { navigation: RootStackNaviga
               id: cert.goalId,
               icon: "🎯",
               color: "#387aff",
-              name: "Group Goal",
+              name: "목표",
               progress: 0,
               weeklyGoal: 1,
             } as Goal)
@@ -422,6 +511,16 @@ const styles = StyleSheet.create({
     color: "#ffffff",
     fontSize: 16,
     fontWeight: "bold",
+  },
+  emptyStateContainer: {
+    alignItems: "center",
+    justifyContent: "center",
+    padding: 30,
+  },
+  emptyStateText: {
+    fontSize: 16,
+    color: "#767676",
+    textAlign: "center",
   },
 })
 
