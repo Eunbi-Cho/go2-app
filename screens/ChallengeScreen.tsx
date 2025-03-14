@@ -4,7 +4,7 @@ import type { ChallengeHistory } from "../types/challenge"
 import type { Goal } from "../types/goal"
 import type { Certification } from "../types/certification"
 import type { User } from "../types/user"
-import { useState, useEffect, useCallback } from "react"
+import { useState, useEffect, useCallback, useRef, useMemo } from "react"
 import { View, Text, StyleSheet, Image as RNImage, TouchableOpacity, ScrollView, Alert, TextInput } from "react-native"
 import { SafeAreaView } from "react-native-safe-area-context"
 import Clipboard from "@react-native-clipboard/clipboard"
@@ -24,7 +24,21 @@ interface ChallengeMember {
   goals: Goal[]
 }
 
+// Firestore Timestamp 타입 정의
+interface FirestoreTimestamp {
+  toDate: () => Date
+  seconds: number
+  nanoseconds: number
+}
+
+// 타입 가드 함수
+function isFirestoreTimestamp(obj: any): obj is FirestoreTimestamp {
+  return obj && typeof obj.toDate === "function"
+}
+
 export default function ChallengeScreen() {
+  // 컴포넌트 상단에 추가
+  const isCalculatingProgress = useRef(false)
   const [currentMonth, setCurrentMonth] = useState(new Date().getMonth() + 1)
   const [currentYear, setCurrentYear] = useState(new Date().getFullYear())
   const [members, setMembers] = useState<ChallengeMember[]>([])
@@ -45,6 +59,12 @@ export default function ChallengeScreen() {
   const [userChallengeGroups, setUserChallengeGroups] = useState<string[]>([])
   const [groupsData, setGroupsData] = useState<{ [groupId: string]: { name: string; code: string } }>({})
   const [activeTab, setActiveTab] = useState<string | null | undefined>(undefined)
+  const [progressCalculated, setProgressCalculated] = useState<{ [key: string]: boolean }>({})
+  const lastCalculationTime = useRef<{ [key: string]: number }>({})
+  const calculationInProgress = useRef<{ [key: string]: boolean }>({})
+  const [stableProgressData, setStableProgressData] = useState<{
+    [key: string]: { members: any[]; timestamp: number }
+  }>({})
 
   const calculateTotalProgress = useCallback(
     (userGoals: Goal[], userId: string, year: number, month: number) => {
@@ -56,7 +76,10 @@ export default function ChallengeScreen() {
       // 해당 월의 인증샷만 필터링
       const userCerts = certifications[userId] || []
       const monthCerts = userCerts.filter((cert) => {
-        const certDate = cert.timestamp.toDate()
+        if (!cert.timestamp) return false
+
+        const certDate = isFirestoreTimestamp(cert.timestamp) ? cert.timestamp.toDate() : new Date(cert.timestamp)
+
         const certMonth = certDate.getMonth() + 1
         const certYear = certDate.getFullYear()
         return certYear === year && certMonth === month
@@ -119,7 +142,10 @@ export default function ChallengeScreen() {
       filteredWeeks.forEach((week, weekIndex) => {
         // 이 주차의 인증샷 필터링
         const weekCerts = monthCerts.filter((cert) => {
-          const certDate = cert.timestamp.toDate()
+          if (!cert.timestamp) return false
+
+          const certDate = isFirestoreTimestamp(cert.timestamp) ? cert.timestamp.toDate() : new Date(cert.timestamp)
+
           return certDate >= week.start && certDate <= week.end
         })
 
@@ -187,9 +213,11 @@ export default function ChallengeScreen() {
       console.log(`Updating member progress for ${year}-${month}`)
 
       // 이미 계산된 진행률이 있는지 확인하여 불필요한 업데이트 방지
-      const historyKey = `${year}-${month}`
+      if (!activeTab) return
+
+      const historyKey = `${activeTab}-${year}-${month}`
       if (historicalData[historyKey]) {
-        console.log(`Using cached progress data for ${year}-${month}`)
+        console.log(`Using cached progress data for ${historyKey}`)
         return
       }
 
@@ -224,27 +252,123 @@ export default function ChallengeScreen() {
         console.log("No changes in member progress, skipping update")
       }
     },
-    [calculateTotalProgress, goals, currentMonthMembers, historicalData],
+    [activeTab, calculateTotalProgress, goals, currentMonthMembers, historicalData],
   )
 
   const updateMemberProgress = useCallback(() => {
     console.log("Updating member progress for current month")
+
+    if (!activeTab) return
+
     const now = new Date()
-    updateMemberProgressForMonth(now.getFullYear(), now.getMonth() + 1)
-  }, [updateMemberProgressForMonth])
+    const historyKey = `${activeTab}-${now.getFullYear()}-${now.getMonth() + 1}`
+
+    // 이미 계산 중인지 확인
+    if (calculationInProgress.current[historyKey]) {
+      console.log("Progress calculation already in progress, skipping")
+      return
+    }
+
+    // 최근에 계산했는지 확인 (1분 이내)
+    const lastCalcTime = lastCalculationTime.current[historyKey] || 0
+    const oneMinuteAgo = Date.now() - 60 * 1000
+
+    if (lastCalcTime > oneMinuteAgo) {
+      console.log(`Data was calculated recently (${new Date(lastCalcTime).toLocaleTimeString()}), skipping`)
+      return
+    }
+
+    calculationInProgress.current[historyKey] = true
+
+    try {
+      // 멤버 목록이 비어있으면 업데이트하지 않음
+      if (currentMonthMembers.length === 0) {
+        console.log("No members to update progress for")
+        return
+      }
+
+      // 이전 상태를 기반으로 새 상태 계산
+      const updatedMembers = currentMonthMembers.map((member) => {
+        const memberGoals = goals[member.userId] || []
+        console.log(`Calculating progress for member ${member.name} with ${memberGoals.length} goals`)
+        const monthlyProgress = calculateTotalProgress(
+          memberGoals,
+          member.userId,
+          now.getFullYear(),
+          now.getMonth() + 1,
+        )
+        console.log(`Member ${member.name}'s calculated progress: ${monthlyProgress}%`)
+
+        return {
+          ...member,
+          totalProgress: monthlyProgress,
+          goals: memberGoals,
+        }
+      })
+
+      // 정렬된 멤버 데이터 생성
+      const sortedMembers = [...updatedMembers].sort((a, b) => b.totalProgress - a.totalProgress)
+      const rankedMembers = sortedMembers.map((member, index) => ({
+        userId: member.userId,
+        name: member.name,
+        profileImage: member.profileImage,
+        totalProgress: member.totalProgress,
+        rank: index + 1,
+      }))
+
+      // 안정적인 상태로 한 번에 업데이트
+      setStableProgressData((prev) => ({
+        ...prev,
+        [historyKey]: {
+          members: rankedMembers,
+          timestamp: Date.now(),
+        },
+      }))
+
+      // 현재 월 데이터 캐싱
+      if (activeTab) {
+        // activeTab이 null이나 undefined가 아닌 경우에만 실행
+        setHistoricalData((prevData) => ({
+          ...prevData,
+          [historyKey]: {
+            id: historyKey,
+            groupId: activeTab,
+            year: now.getFullYear(),
+            month: now.getMonth() + 1,
+            members: rankedMembers,
+            completedAt: new Date(),
+          },
+        }))
+      }
+
+      // 계산 완료 표시
+      setProgressCalculated((prev) => ({
+        ...prev,
+        [historyKey]: true,
+      }))
+
+      // 계산 시간 기록
+      lastCalculationTime.current[historyKey] = Date.now()
+    } finally {
+      // 계산 완료 후 플래그 초기화
+      setTimeout(() => {
+        calculationInProgress.current[historyKey] = false
+      }, 500)
+    }
+  }, [activeTab, calculateTotalProgress, goals, currentMonthMembers])
 
   const saveChallengeHistory = useCallback(
     async (yearToSave: number, monthToSave: number) => {
       if (!activeTab) return
 
       // 이미 저장된 히스토리가 있는지 확인
-      const historyKey = `${yearToSave}-${monthToSave}`
+      const historyKey = `${activeTab}-${yearToSave}-${monthToSave}`
       if (historicalData[historyKey]) {
-        console.log(`History for ${yearToSave}-${monthToSave} already exists in cache, skipping save`)
+        console.log(`History for ${historyKey} already exists in cache, skipping save`)
         return
       }
 
-      console.log(`Saving challenge history for ${yearToSave}-${monthToSave}`)
+      console.log(`Saving challenge history for ${historyKey}`)
 
       try {
         // 해당 월의 멤버 진행률 계산
@@ -277,14 +401,14 @@ export default function ChallengeScreen() {
         let historyId = ""
 
         if (!existingHistorySnapshot.empty) {
-          console.log(`History for ${yearToSave}-${monthToSave} already exists in Firestore, updating...`)
+          console.log(`History for ${historyKey} already exists in Firestore, updating...`)
           historyId = existingHistorySnapshot.docs[0].id
           await firestore().collection("challengeHistory").doc(historyId).update({
             members: rankedMembers,
             completedAt: new Date(),
           })
         } else {
-          console.log(`Creating new history for ${yearToSave}-${monthToSave}`)
+          console.log(`Creating new history for ${historyKey}`)
           const historyData: Omit<ChallengeHistory, "id"> = {
             groupId: activeTab,
             year: yearToSave,
@@ -298,21 +422,23 @@ export default function ChallengeScreen() {
         }
 
         // 히스토리 데이터 캐시 업데이트
-        setHistoricalData((prevData) => ({
-          ...prevData,
-          [`${yearToSave}-${monthToSave}`]: {
-            id: historyId,
-            groupId: activeTab,
-            year: yearToSave,
-            month: monthToSave,
-            members: rankedMembers,
-            completedAt: new Date(),
-          },
-        }))
+        if (activeTab) {
+          setHistoricalData((prevData) => ({
+            ...prevData,
+            [historyKey]: {
+              id: historyId,
+              groupId: activeTab,
+              year: yearToSave,
+              month: monthToSave,
+              members: rankedMembers,
+              completedAt: new Date(),
+            },
+          }))
+        }
 
-        console.log(`Challenge history for ${yearToSave}-${monthToSave} saved successfully`)
+        console.log(`Challenge history for ${historyKey} saved successfully`)
       } catch (error) {
-        console.error(`Error saving challenge history for ${yearToSave}-${monthToSave}:`, error)
+        console.error(`Error saving challenge history for ${historyKey}:`, error)
       }
     },
     [activeTab, currentMonthMembers, goals, calculateTotalProgress, historicalData],
@@ -320,82 +446,230 @@ export default function ChallengeScreen() {
 
   const loadMonthData = useCallback(async () => {
     if (!activeTab) return
+    const historyKey = `${activeTab}-${currentYear}-${currentMonth}`
 
-    console.log(`Loading data for ${currentYear}-${currentMonth}`)
+    // 이미 안정적인 데이터가 있는지 확인
+    if (stableProgressData[historyKey] && stableProgressData[historyKey].timestamp > Date.now() - 5 * 60 * 1000) {
+      console.log(`Using stable progress data for ${historyKey}`)
+      return
+    }
+
+    console.log(`Loading data for ${currentYear}-${currentMonth} for group ${activeTab}`)
+
+    // 히스토리 키 생성 - 그룹 ID를 포함하여 그룹별로 캐시
+    // const historyKey = `${activeTab}-${currentYear}-${currentMonth}`
+
+    // 계산이 이미 진행 중인지 확인
+    if (calculationInProgress.current[historyKey]) {
+      console.log(`Calculation already in progress for ${historyKey}, skipping`)
+      return
+    }
 
     // 현재 월인지 확인
     const now = new Date()
     const isCurrentMonthYear = currentMonth === now.getMonth() + 1 && currentYear === now.getFullYear()
 
-    if (isCurrentMonthYear) {
-      // 현재 월은 실시간 데이터 사용
-      updateMemberProgress()
-    } else {
-      // 과거 월은 히스토리 데이터 로드
-      setIsLoadingHistory(true)
-      try {
-        // 이미 히스토리 데이터가 있는지 확인
-        const historyKey = `${currentYear}-${currentMonth}`
-        if (historicalData[historyKey]) {
-          console.log(`Using cached history data for ${currentYear}-${currentMonth}`)
-          // 이미 캐시된 데이터가 있으면 추가 로드 없이 사용
-          setIsLoadingHistory(false)
+    // 이미 캐시된 데이터가 있는지 확인
+    if (historicalData[historyKey]) {
+      console.log(`Using cached history data for ${historyKey}`)
+
+      // 과거 월 데이터는 무조건 캐시 사용
+      if (!isCurrentMonthYear) {
+        return
+      }
+
+      // 현재 월이라도 최근 1분 내에 계산된 데이터가 있으면 사용
+      const lastCalcTime = lastCalculationTime.current[historyKey] || 0
+      const oneMinuteAgo = Date.now() - 60 * 1000
+
+      if (lastCalcTime > oneMinuteAgo) {
+        console.log(`Data was calculated recently (${new Date(lastCalcTime).toLocaleTimeString()}), skipping`)
+        return
+      }
+    }
+
+    // 계산 시작을 표시
+    calculationInProgress.current[historyKey] = true
+
+    try {
+      // 현재 월인지 확인
+      const now = new Date()
+      const isCurrentMonthYear = currentMonth === now.getMonth() + 1 && currentYear === now.getFullYear()
+
+      // 히스토리 키 생성 - 그룹 ID를 포함하여 그룹별로 캐시
+      // const historyKey = `${activeTab}-${currentYear}-${currentMonth}`
+
+      // 이미 캐시된 데이터가 있는지 확인
+      if (historicalData[historyKey]) {
+        console.log(`Using cached history data for ${historyKey}`)
+
+        // 과거 월 데이터인 경우 캐시된 데이터 사용
+        if (!isCurrentMonthYear) {
           return
         }
 
-        const historySnapshot = await firestore()
-          .collection("challengeHistory")
-          .where("groupId", "==", activeTab)
-          .where("year", "==", currentYear)
-          .where("month", "==", currentMonth)
-          .get()
+        // 현재 월이라도 최근에 계산된 데이터가 있으면 사용
+        const cachedTime = historicalData[historyKey].completedAt
+        let cachedDate: Date
 
-        if (!historySnapshot.empty) {
-          const historyData = historySnapshot.docs[0].data() as ChallengeHistory
-          setHistoricalData((prevData) => ({
-            ...prevData,
-            [`${currentYear}-${currentMonth}`]: historyData,
-          }))
-          console.log(`Loaded history data for ${currentYear}-${currentMonth}`)
+        if (isFirestoreTimestamp(cachedTime)) {
+          cachedDate = cachedTime.toDate()
+        } else if (cachedTime instanceof Date) {
+          cachedDate = cachedTime
         } else {
-          console.log(`No history data found for ${currentYear}-${currentMonth}, calculating from certifications`)
+          cachedDate = new Date(0)
+        }
 
-          // 이전 달 인증샷 데이터 가져오기
-          const startDate = new Date(currentYear, currentMonth - 1, 1)
-          const endDate = new Date(currentYear, currentMonth, 0, 23, 59, 59)
+        const fiveMinutesAgo = new Date(Date.now() - 5 * 60 * 1000)
 
-          console.log(`Fetching certifications from ${startDate} to ${endDate}`)
+        if (cachedDate > fiveMinutesAgo) {
+          console.log("Using recent cached data for current month")
+          return
+        }
+      }
 
-          // 그룹의 모든 멤버 ID 가져오기
-          const membersSnapshot = await firestore()
-            .collection("users")
-            .where("challengeGroupId", "array-contains", activeTab)
+      if (isCurrentMonthYear) {
+        // 현재 월은 실시간 데이터 사용
+        if (isCalculatingProgress.current) {
+          console.log("Progress calculation already in progress, skipping")
+          return
+        }
+
+        isCalculatingProgress.current = true
+
+        try {
+          // 현재 멤버 목록이 비어있으면 업데이트하지 않음
+          if (currentMonthMembers.length === 0) {
+            console.log("No members to update progress for")
+            return
+          }
+
+          // 이전 상태를 기반으로 새 상태 계산
+          const updatedMembers = currentMonthMembers.map((member) => {
+            const memberGoals = goals[member.userId] || []
+            console.log(`Calculating progress for member ${member.name} with ${memberGoals.length} goals`)
+            const monthlyProgress = calculateTotalProgress(memberGoals, member.userId, currentYear, currentMonth)
+            console.log(`Member ${member.name}'s calculated progress: ${monthlyProgress}%`)
+
+            return {
+              ...member,
+              totalProgress: monthlyProgress,
+              goals: memberGoals,
+            }
+          })
+
+          // 상태 업데이트
+          setCurrentMonthMembers(updatedMembers)
+
+          // 현재 월 데이터 캐싱
+          const sortedMembers = [...updatedMembers].sort((a, b) => b.totalProgress - a.totalProgress)
+          const rankedMembers = sortedMembers.map((member, index) => ({
+            userId: member.userId,
+            name: member.name,
+            profileImage: member.profileImage,
+            totalProgress: member.totalProgress,
+            rank: index + 1,
+          }))
+
+          // 히스토리 데이터 캐시 업데이트
+          if (activeTab) {
+            setHistoricalData((prevData) => ({
+              ...prevData,
+              [historyKey]: {
+                id: historyKey,
+                groupId: activeTab,
+                year: currentYear,
+                month: currentMonth,
+                members: rankedMembers,
+                completedAt: new Date(),
+              },
+            }))
+          }
+
+          // 계산 완료 표시
+          setProgressCalculated((prev) => ({
+            ...prev,
+            [historyKey]: true,
+          }))
+        } finally {
+          // 계산 완료 후 플래그 초기화
+          setTimeout(() => {
+            isCalculatingProgress.current = false
+          }, 500)
+        }
+      } else {
+        // 과거 월은 히스토리 데이터 로드
+        setIsLoadingHistory(true)
+        try {
+          const historySnapshot = await firestore()
+            .collection("challengeHistory")
+            .where("groupId", "==", activeTab)
+            .where("year", "==", currentYear)
+            .where("month", "==", currentMonth)
             .get()
 
-          const memberIds = membersSnapshot.docs.map((doc) => doc.id)
+          if (!historySnapshot.empty) {
+            const historyDoc = historySnapshot.docs[0]
+            const historyData = {
+              id: historyDoc.id,
+              ...historyDoc.data(),
+            } as ChallengeHistory
 
-          if (memberIds.length > 0) {
-            // 해당 기간 동안의 모든 인증샷 가져오기
-            const periodCertificationsSnapshot = await firestore()
-              .collection("certifications")
-              .where("userId", "in", memberIds)
-              .where("timestamp", ">=", startDate)
-              .where("timestamp", "<=", endDate)
+            setHistoricalData((prevData) => ({
+              ...prevData,
+              [historyKey]: historyData,
+            }))
+            console.log(`Loaded history data for ${historyKey}`)
+          } else {
+            console.log(`No history data found for ${historyKey}, calculating from certifications`)
+
+            // 이전 달 인증샷 데이터 가져오기
+            const startDate = new Date(currentYear, currentMonth - 1, 1)
+            const endDate = new Date(currentYear, currentMonth, 0, 23, 59, 59)
+
+            console.log(`Fetching certifications from ${startDate} to ${endDate}`)
+
+            // 그룹의 모든 멤버 ID 가져오기
+            const membersSnapshot = await firestore()
+              .collection("users")
+              .where("challengeGroupId", "array-contains", activeTab)
               .get()
 
-            console.log(`Found ${periodCertificationsSnapshot.size} certifications for ${currentYear}-${currentMonth}`)
+            const stringMembersSnapshot = await firestore()
+              .collection("users")
+              .where("challengeGroupId", "==", activeTab)
+              .get()
 
-            // 인증샷이 있으면 히스토리 데이터 생성
-            if (periodCertificationsSnapshot.size > 0) {
-              // 사용자별로 인증샷 정리
+            // 중복 제거를 위한 Set
+            const memberIds = new Set<string>()
+
+            membersSnapshot.docs.forEach((doc) => memberIds.add(doc.id))
+            stringMembersSnapshot.docs.forEach((doc) => memberIds.add(doc.id))
+
+            const memberIdsArray = Array.from(memberIds)
+
+            if (memberIdsArray.length > 0) {
+              // 해당 기간 동안의 모든 인증샷 가져오기
               const certsByUser: { [userId: string]: Certification[] } = {}
-              periodCertificationsSnapshot.docs.forEach((doc) => {
-                const cert = { id: doc.id, ...doc.data() } as Certification
-                if (!certsByUser[cert.userId]) {
-                  certsByUser[cert.userId] = []
-                }
-                certsByUser[cert.userId].push(cert)
-              })
+
+              // 멤버가 10명 이상이면 배치 처리
+              for (let i = 0; i < memberIdsArray.length; i += 10) {
+                const batchMemberIds = memberIdsArray.slice(i, Math.min(i + 10, memberIdsArray.length))
+                const periodCertificationsSnapshot = await firestore()
+                  .collection("certifications")
+                  .where("userId", "in", batchMemberIds)
+                  .where("timestamp", ">=", startDate)
+                  .where("timestamp", "<=", endDate)
+                  .get()
+
+                periodCertificationsSnapshot.docs.forEach((doc) => {
+                  const cert = { id: doc.id, ...doc.data() } as Certification
+                  if (!certsByUser[cert.userId]) {
+                    certsByUser[cert.userId] = []
+                  }
+                  certsByUser[cert.userId].push(cert)
+                })
+              }
 
               // certifications 상태 업데이트
               setCertifications((prevCertifications) => {
@@ -406,34 +680,149 @@ export default function ChallengeScreen() {
                 return newCertifications
               })
 
-              // 이제 업데이트된 인증샷으로 멤버 진행률 계산
-              updateMemberProgressForMonth(currentYear, currentMonth)
+              // 멤버 데이터 가져오기
+              const membersData: ChallengeMember[] = []
 
-              // 히스토리 데이터 저장 - 별도 함수로 분리하여 호출
-              if (periodCertificationsSnapshot.size > 0) {
-                // 비동기 작업이지만 결과를 기다리지 않음
-                // 이 부분을 setTimeout으로 감싸서 현재 렌더링 사이클과 분리
-                setTimeout(() => {
-                  saveChallengeHistory(currentYear, currentMonth).catch(console.error)
-                }, 0)
+              for (const userId of memberIdsArray) {
+                const userDoc = await firestore().collection("users").doc(userId).get()
+                if (userDoc.exists) {
+                  const userData = userDoc.data()
+                  membersData.push({
+                    id: userId,
+                    userId: userId,
+                    name: userData?.nickname || "Unknown",
+                    profileImage: userData?.profileImageUrl || "",
+                    totalProgress: 0,
+                    goals: [],
+                  })
+                }
+              }
+
+              // 각 멤버의 목표 가져오기
+              const goalsData: { [userId: string]: Goal[] } = {}
+
+              for (let i = 0; i < memberIdsArray.length; i += 10) {
+                const batchMemberIds = memberIdsArray.slice(i, Math.min(i + 10, memberIdsArray.length))
+                const goalsSnapshot = await firestore().collection("goals").where("userId", "in", batchMemberIds).get()
+
+                goalsSnapshot.docs.forEach((doc) => {
+                  const goal = { id: doc.id, ...doc.data() } as Goal
+                  if (!goalsData[goal.userId]) {
+                    goalsData[goal.userId] = []
+                  }
+                  goalsData[goal.userId].push(goal)
+                })
+              }
+
+              // 목표 데이터 설정
+              setGoals((prevGoals) => ({ ...prevGoals, ...goalsData }))
+
+              // 각 멤버의 달성률 계산
+              const membersWithProgress = membersData.map((member) => {
+                const memberGoals = goalsData[member.userId] || []
+                const monthlyProgress = calculateTotalProgress(memberGoals, member.userId, currentYear, currentMonth)
+                return {
+                  ...member,
+                  totalProgress: monthlyProgress,
+                  goals: memberGoals,
+                }
+              })
+
+              // 멤버 정렬 및 랭킹 부여
+              const sortedMembers = [...membersWithProgress].sort((a, b) => b.totalProgress - a.totalProgress)
+              const rankedMembers = sortedMembers.map((member, index) => ({
+                userId: member.userId,
+                name: member.name,
+                profileImage: member.profileImage,
+                totalProgress: member.totalProgress,
+                rank: index + 1,
+              }))
+
+              // 히스토리 데이터 캐시 업데이트
+              if (activeTab) {
+                setHistoricalData((prevData) => ({
+                  ...prevData,
+                  [historyKey]: {
+                    id: "calculated",
+                    groupId: activeTab,
+                    year: currentYear,
+                    month: currentMonth,
+                    members: rankedMembers,
+                    completedAt: new Date(),
+                  },
+                }))
+              }
+
+              // 계산 완료 표시
+              setProgressCalculated((prev) => ({
+                ...prev,
+                [historyKey]: true,
+              }))
+
+              // 히스토리 데이터 저장
+              try {
+                const historyData: Omit<ChallengeHistory, "id"> = {
+                  groupId: activeTab,
+                  year: currentYear,
+                  month: currentMonth,
+                  members: rankedMembers,
+                  completedAt: new Date(),
+                }
+
+                const docRef = await firestore().collection("challengeHistory").add(historyData)
+
+                // 저장된 히스토리 ID로 캐시 업데이트
+                setHistoricalData((prevData) => ({
+                  ...prevData,
+                  [historyKey]: {
+                    ...prevData[historyKey],
+                    id: docRef.id,
+                  },
+                }))
+              } catch (error) {
+                console.error("Error saving challenge history:", error)
+              }
+            } else {
+              // 멤버가 없는 경우 빈 히스토리 데이터 생성
+              if (activeTab) {
+                setHistoricalData((prevData) => ({
+                  ...prevData,
+                  [historyKey]: {
+                    id: "empty",
+                    groupId: activeTab,
+                    year: currentYear,
+                    month: currentMonth,
+                    members: [],
+                    completedAt: new Date(),
+                  },
+                }))
               }
             }
           }
+        } catch (error) {
+          console.error("Error fetching challenge history:", error)
+        } finally {
+          setIsLoadingHistory(false)
         }
-      } catch (error) {
-        console.error("Error fetching challenge history:", error)
-      } finally {
-        setIsLoadingHistory(false)
       }
+
+      // 현재 월 데이터 캐싱 후에 시간 기록
+      lastCalculationTime.current[historyKey] = Date.now()
+    } finally {
+      // 계산 완료 후 플래그 초기화
+      setTimeout(() => {
+        calculationInProgress.current[historyKey] = false
+      }, 500)
     }
   }, [
     activeTab,
     currentYear,
     currentMonth,
-    updateMemberProgress,
-    updateMemberProgressForMonth,
-    saveChallengeHistory,
+    calculateTotalProgress,
+    goals,
+    currentMonthMembers,
     historicalData,
+    stableProgressData,
   ])
 
   const fetchUserGoals = useCallback((userId: string) => {
@@ -463,6 +852,8 @@ export default function ChallengeScreen() {
       if (!groupId) return
 
       try {
+        console.log("Fetching members for group:", groupId)
+
         // 그룹 멤버 가져오기 - challengeGroupId가 문자열인 경우
         const stringMembersSnapshot = await firestore()
           .collection("users")
@@ -525,46 +916,132 @@ export default function ChallengeScreen() {
               totalProgress: 0,
               goals: [],
             })
+            memberIds.add(currentUserAuth.uid)
           }
         }
 
-        console.log("Challenge group members:", membersData)
+        console.log("Challenge group members:", membersData.length)
         setCurrentMonthMembers(membersData)
 
         // 각 멤버의 목표 가져오기
-        membersData.forEach((member) => {
-          fetchUserGoals(member.userId)
-        })
+        const memberIdsArray = Array.from(memberIds)
+        const goalsData: { [userId: string]: Goal[] } = {}
+
+        // 멤버가 10명 이상이면 배치 처리
+        for (let i = 0; i < memberIdsArray.length; i += 10) {
+          const batchMemberIds = memberIdsArray.slice(i, Math.min(i + 10, memberIdsArray.length))
+          const goalsSnapshot = await firestore().collection("goals").where("userId", "in", batchMemberIds).get()
+
+          goalsSnapshot.docs.forEach((doc) => {
+            const goal = { id: doc.id, ...doc.data() } as Goal
+            if (!goalsData[goal.userId]) {
+              goalsData[goal.userId] = []
+            }
+            goalsData[goal.userId].push(goal)
+          })
+        }
+
+        // 목표 데이터 설정
+        setGoals(goalsData)
 
         // 모든 멤버의 인증샷 가져오기 (전체 기간)
-        const memberIdsArray = Array.from(memberIds)
         if (memberIdsArray.length > 0) {
           // 인증샷 데이터 가져오기 (전체 기간)
-          const certificationsSnapshot = await firestore()
-            .collection("certifications")
-            .where("userId", "in", memberIdsArray)
-            .get()
-
-          console.log(`Fetched ${certificationsSnapshot.size} certifications for all members`)
-
-          // 사용자별로 인증샷 정리
           const certsByUser: { [userId: string]: Certification[] } = {}
-          certificationsSnapshot.docs.forEach((doc) => {
-            const cert = { id: doc.id, ...doc.data() } as Certification
-            if (!certsByUser[cert.userId]) {
-              certsByUser[cert.userId] = []
-            }
-            certsByUser[cert.userId].push(cert)
-          })
+
+          // 멤버가 10명 이상이면 배치 처리
+          for (let i = 0; i < memberIdsArray.length; i += 10) {
+            const batchMemberIds = memberIdsArray.slice(i, Math.min(i + 10, memberIdsArray.length))
+            const certificationsSnapshot = await firestore()
+              .collection("certifications")
+              .where("userId", "in", batchMemberIds)
+              .get()
+
+            certificationsSnapshot.docs.forEach((doc) => {
+              const cert = { id: doc.id, ...doc.data() } as Certification
+              if (!certsByUser[cert.userId]) {
+                certsByUser[cert.userId] = []
+              }
+              certsByUser[cert.userId].push(cert)
+            })
+          }
 
           setCertifications(certsByUser)
+
+          // 멤버 진행률 즉시 계산
+          const now = new Date()
+          const historyKey = `${activeTab}-${now.getFullYear()}-${now.getMonth() + 1}`
+
+          // 이미 안정적인 데이터가 있는지 확인
+          if (stableProgressData[historyKey] && stableProgressData[historyKey].timestamp > Date.now() - 5 * 60 * 1000) {
+            console.log(`Using existing stable data for ${historyKey}`)
+            return
+          }
+
+          const updatedMembers = membersData.map((member) => {
+            const memberGoals = goalsData[member.userId] || []
+            const monthlyProgress = calculateTotalProgress(
+              memberGoals,
+              member.userId,
+              now.getFullYear(),
+              now.getMonth() + 1,
+            )
+            return {
+              ...member,
+              totalProgress: monthlyProgress,
+              goals: memberGoals,
+            }
+          })
+
+          // 상태 업데이트
+          setCurrentMonthMembers(updatedMembers)
+
+          // 정렬된 멤버 데이터 생성
+          const sortedMembers = [...updatedMembers].sort((a, b) => b.totalProgress - a.totalProgress)
+          const rankedMembers = sortedMembers.map((member, index) => ({
+            userId: member.userId,
+            name: member.name,
+            profileImage: member.profileImage,
+            totalProgress: member.totalProgress,
+            rank: index + 1,
+          }))
+
+          // 안정적인 상태로 한 번에 업데이트
+          setStableProgressData((prev) => ({
+            ...prev,
+            [historyKey]: {
+              members: rankedMembers,
+              timestamp: Date.now(),
+            },
+          }))
+
+          // 히스토리 데이터 캐시 업데이트
+          if (activeTab) {
+            setHistoricalData((prevData) => ({
+              ...prevData,
+              [historyKey]: {
+                id: historyKey,
+                groupId: activeTab,
+                year: now.getFullYear(),
+                month: now.getMonth() + 1,
+                members: rankedMembers,
+                completedAt: new Date(),
+              },
+            }))
+          }
+
+          // 계산 완료 표시
+          setProgressCalculated((prev) => ({
+            ...prev,
+            [historyKey]: true,
+          }))
         }
       } catch (error) {
         console.error("Error fetching group members:", error)
         setCurrentMonthMembers([])
       }
     },
-    [fetchUserGoals],
+    [calculateTotalProgress, activeTab, stableProgressData],
   )
 
   const fetchChallengeGroup = useCallback(async () => {
@@ -662,76 +1139,87 @@ export default function ChallengeScreen() {
     const currentUser = auth().currentUser
     if (!currentUser) return
 
-    const code = Math.random().toString(36).substring(2, 8).toUpperCase()
-    const groupRef = await firestore().collection("challengeGroups").add({
-      code,
-      name: inputGroupName,
-      createdBy: currentUser.uid,
-      createdAt: firestore.FieldValue.serverTimestamp(),
-    })
+    try {
+      const code = Math.random().toString(36).substring(2, 8).toUpperCase()
+      const groupRef = await firestore().collection("challengeGroups").add({
+        code,
+        name: inputGroupName,
+        createdBy: currentUser.uid,
+        createdAt: firestore.FieldValue.serverTimestamp(),
+      })
 
-    // Get current user data
-    const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
-    const userData = userDoc.data() || {}
+      // Get current user data
+      const userDoc = await firestore().collection("users").doc(currentUser.uid).get()
+      const userData = userDoc.data() || {}
 
-    // 기존 challengeGroupId 필드 처리
-    let currentGroupIds: string[] = []
+      // 기존 challengeGroupId 필드 처리
+      let currentGroupIds: string[] = []
 
-    if (userData.challengeGroupId) {
-      if (typeof userData.challengeGroupId === "string") {
-        // 문자열인 경우 배열로 변환
-        currentGroupIds = [userData.challengeGroupId]
-      } else if (Array.isArray(userData.challengeGroupId)) {
-        // 이미 배열인 경우 그대로 사용
-        currentGroupIds = userData.challengeGroupId
-      }
-    }
-
-    // 새 그룹 추가
-    currentGroupIds.push(groupRef.id)
-
-    // 사용자 문서 업데이트
-    await firestore().collection("users").doc(currentUser.uid).update({
-      challengeGroupId: currentGroupIds,
-    })
-
-    setChallengeCode(code)
-    setGroupName(inputGroupName)
-    setUserChallengeGroup(groupRef.id)
-    setActiveTab(groupRef.id)
-
-    // Update local state
-    setUserChallengeGroups((prev) => [...prev, groupRef.id])
-    setGroupsData((prev) => ({
-      ...prev,
-      [groupRef.id]: { name: inputGroupName, code },
-    }))
-
-    // 현재 사용자를 멤버 목록에 즉시 추가
-    if (currentUser) {
-      const currentUserDoc = await firestore().collection("users").doc(currentUser.uid).get()
-      if (currentUserDoc.exists) {
-        const currentUserData = currentUserDoc.data()
-        const newMember: ChallengeMember = {
-          id: currentUser.uid,
-          userId: currentUser.uid,
-          name: currentUserData?.nickname || "Unknown",
-          profileImage: currentUserData?.profileImageUrl || "",
-          totalProgress: 0,
-          goals: [],
+      if (userData.challengeGroupId) {
+        if (typeof userData.challengeGroupId === "string") {
+          // 문자열인 경우 배열로 변환
+          currentGroupIds = [userData.challengeGroupId]
+        } else if (Array.isArray(userData.challengeGroupId)) {
+          // 이미 배열인 경우 그대로 사용
+          currentGroupIds = userData.challengeGroupId
         }
-        setCurrentMonthMembers([newMember])
-
-        // 현재 사용자의 목표 가져오기
-        fetchUserGoals(currentUser.uid)
       }
+
+      // 새 그룹 추가
+      currentGroupIds.push(groupRef.id)
+
+      // 사용자 문서 업데이트
+      await firestore().collection("users").doc(currentUser.uid).update({
+        challengeGroupId: currentGroupIds,
+      })
+
+      // 상태 업데이트
+      setChallengeCode(code)
+      setGroupName(inputGroupName)
+      setUserChallengeGroup(groupRef.id)
+      setActiveTab(groupRef.id)
+      setUserChallengeGroups((prev) => [...prev, groupRef.id])
+      setGroupsData((prev) => ({
+        ...prev,
+        [groupRef.id]: { name: inputGroupName, code },
+      }))
+
+      // 현재 사용자를 멤버 목록에 즉시 추가
+      if (currentUser) {
+        const currentUserDoc = await firestore().collection("users").doc(currentUser.uid).get()
+        if (currentUserDoc.exists) {
+          const currentUserData = currentUserDoc.data()
+          const newMember: ChallengeMember = {
+            id: currentUser.uid,
+            userId: currentUser.uid,
+            name: currentUserData?.nickname || "Unknown",
+            profileImage: currentUserData?.profileImageUrl || "",
+            totalProgress: 0,
+            goals: [],
+          }
+
+          // 멤버 목록 업데이트
+          setCurrentMonthMembers([newMember])
+
+          // 현재 사용자의 목표 가져오기
+          const goalsSnapshot = await firestore().collection("goals").where("userId", "==", currentUser.uid).get()
+
+          const userGoals = goalsSnapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }) as Goal)
+          setGoals((prevGoals) => ({ ...prevGoals, [currentUser.uid]: userGoals }))
+        }
+      }
+
+      Clipboard.setString(code)
+      Alert.alert("성공", "챌린지 그룹이 생성되었습니다. 코드가 클립보드에 복사되었습니다.")
+
+      // 데이터 새로고침
+      setTimeout(() => {
+        fetchGroupMembers(groupRef.id)
+      }, 500)
+    } catch (error) {
+      console.error("Error creating challenge group:", error)
+      Alert.alert("오류", "챌린지 그룹 생성 중 문제가 발생했습니다.")
     }
-
-    Clipboard.setString(code)
-    Alert.alert("성공", "챌린지 그룹이 생성되었습니다. 코드가 클립보드에 복사되었습니다.")
-
-    // Fetch the new group's data
-    fetchChallengeGroup()
   }
 
   const joinChallengeGroup = async () => {
@@ -780,13 +1268,12 @@ export default function ChallengeScreen() {
         challengeGroupId: currentGroupIds,
       })
 
+      // 상태 업데이트
       setUserChallengeGroup(groupId)
       setChallengeCode(inputCode)
       setGroupName(groupDoc.data().name || "")
       setInputCode("")
       setActiveTab(groupId)
-
-      // Update local state
       setUserChallengeGroups((prev) => [...prev, groupId])
       setGroupsData((prev) => ({
         ...prev,
@@ -801,6 +1288,11 @@ export default function ChallengeScreen() {
 
       // 데이터 새로고침 알림
       Alert.alert("성공", "챌린지 그룹에 참여하였습니다.")
+
+      // 추가 데이터 로드 - 현재 월 데이터 로드
+      setTimeout(() => {
+        loadMonthData()
+      }, 500)
     } catch (error) {
       console.error("Error joining challenge group:", error)
       Alert.alert("오류", "챌린지 그룹 참여 중 문제가 발생했습니다.")
@@ -889,28 +1381,27 @@ export default function ChallengeScreen() {
       setChallengeCode(null)
       setGroupName("")
       setCurrentMonthMembers([])
-      // 약간의 지연 후 다시 activeTab 상태 확인
-      setTimeout(() => {
-        console.log("Checking activeTab after delay:", activeTab)
-        if (activeTab !== null) {
-          console.log("Forcing activeTab to null")
-          setActiveTab(null)
-        }
-      }, 100)
       return
     }
 
     if (groupId) {
-      // Fetch group data
-      const groupDoc = await firestore().collection("challengeGroups").doc(groupId).get()
-      if (groupDoc.exists) {
-        const groupData = groupDoc.data()
-        setChallengeCode(groupData?.code || null)
-        setGroupName(groupData?.name || "")
-      }
+      try {
+        // Fetch group data
+        const groupDoc = await firestore().collection("challengeGroups").doc(groupId).get()
+        if (groupDoc.exists) {
+          const groupData = groupDoc.data()
+          setChallengeCode(groupData?.code || null)
+          setGroupName(groupData?.name || "")
+        }
 
-      // Fetch group members
-      await fetchGroupMembers(groupId)
+        // Fetch group members
+        await fetchGroupMembers(groupId)
+
+        // 현재 월 데이터 로드 - 월 변경 없이 선택된 그룹의 데이터만 로드
+        await loadMonthData()
+      } catch (error) {
+        console.error("Error loading group data:", error)
+      }
     }
   }
 
@@ -921,103 +1412,75 @@ export default function ChallengeScreen() {
   useFocusEffect(
     useCallback(() => {
       let isMounted = true
-      let didFetchData = false
 
-      const checkPreviousMonth = async () => {
-        if (didFetchData) return
-        didFetchData = true
+      const refreshData = async () => {
+        if (!isMounted) return
+
+        console.log("Screen focused, refreshing data")
 
         // 현재 activeTab 상태 저장
         const currentActiveTab = activeTab
 
+        // 현재 월/년 저장
+        const currentMonthValue = currentMonth
+        const currentYearValue = currentYear
+
+        // 그룹 데이터 새로고침
         await fetchChallengeGroup()
 
-        // 사용자가 명시적으로 새 그룹 탭을 선택했다면 activeTab을 null로 복원
-        if (currentActiveTab !== undefined) {
+        // 사용자가 명시적으로 새 그룹 탭을 선택했다면 activeTab을 복원
+        if (currentActiveTab !== undefined && isMounted) {
           setActiveTab(currentActiveTab)
-        }
 
-        // 현재 달과 이전 달의 히스토리 데이터 확인
-        if (activeTab && isMounted) {
-          const now = new Date()
-          const currentMonthNum = now.getMonth() + 1
-          const currentYearNum = now.getFullYear()
+          // 현재 탭이 그룹 탭이면 멤버 데이터 새로고침
+          if (currentActiveTab !== null) {
+            await fetchGroupMembers(currentActiveTab)
 
-          // 이전 달 계산
-          let prevMonth = currentMonthNum - 1
-          let prevYear = currentYearNum
-          if (prevMonth === 0) {
-            prevMonth = 12
-            prevYear--
-          }
+            // 이전에 선택한 월/년 복원
+            setCurrentMonth(currentMonthValue)
+            setCurrentYear(currentYearValue)
 
-          // 이전 달의 히스토리 데이터 확인
-          const snapshot = await firestore()
-            .collection("challengeHistory")
-            .where("groupId", "==", activeTab)
-            .where("year", "==", prevYear)
-            .where("month", "==", prevMonth)
-            .get()
-
-          if (snapshot.empty && isMounted) {
-            console.log(
-              `No history data found for previous month ${prevYear}-${prevMonth}, checking for certifications`,
-            )
-
-            // 이전 달의 인증샷 확인
-            const startDate = new Date(prevYear, prevMonth - 1, 1)
-            const endDate = new Date(prevYear, prevMonth, 0, 23, 59, 59)
-
-            const certSnapshot = await firestore()
-              .collection("certifications")
-              .where("timestamp", ">=", startDate)
-              .where("timestamp", "<=", endDate)
-              .limit(1) // 하나만 확인하면 충분
-              .get()
-
-            if (!certSnapshot.empty && isMounted) {
-              console.log(`Found certifications for ${prevYear}-${prevMonth}, need to save history data`)
-              // 이전 달로 설정하고 데이터 로드 (이후 저장 로직이 실행됨)
-              // 직접 상태 업데이트 대신 함수 호출
-              if (currentYear !== prevYear || currentMonth !== prevMonth) {
-                // 상태 업데이트를 setTimeout으로 감싸서 현재 렌더링 사이클과 분리
-                setTimeout(() => {
-                  if (isMounted) {
-                    setCurrentYear(prevYear)
-                    setCurrentMonth(prevMonth)
-                  }
-                }, 0)
-              }
-            }
+            // 현재 월 데이터 로드
+            await loadMonthData()
           }
         }
       }
 
-      checkPreviousMonth()
+      refreshData()
 
       return () => {
         isMounted = false
       }
-    }, [fetchChallengeGroup, activeTab, currentMonth, currentYear]),
+    }, [fetchChallengeGroup, fetchGroupMembers, loadMonthData]),
   )
 
   useEffect(() => {
     console.log("Current month/year:", currentMonth, currentYear)
 
+    // activeTab이 없으면 데이터를 로드하지 않음
+    if (!activeTab) return
+
+    // 히스토리 키 생성 - 그룹 ID를 포함
+    const historyKey = `${activeTab}-${currentYear}-${currentMonth}`
+
     // 이미 로드된 데이터가 있는지 확인
-    const historyKey = `${currentYear}-${currentMonth}`
     if (!historicalData[historyKey]) {
+      // 데이터가 없으면 로드
       loadMonthData()
     } else {
-      console.log(`Using cached data for ${currentYear}-${currentMonth}`)
+      console.log(`Using cached data for ${historyKey}`)
     }
-  }, [currentMonth, currentYear, loadMonthData, historicalData])
+  }, [currentMonth, currentYear, loadMonthData, historicalData, activeTab])
 
   useEffect(() => {
     if (activeTab) {
-      loadMonthData()
+      // 이미 안정적인 데이터가 있는지 확인
+      const key = `${activeTab}-${currentYear}-${currentMonth}`
+      if (!stableProgressData[key] || Date.now() - stableProgressData[key].timestamp > 5 * 60 * 1000) {
+        loadMonthData()
+      }
     }
-  }, [activeTab, loadMonthData])
+  }, [activeTab, currentYear, currentMonth, loadMonthData, stableProgressData])
 
   const calculateDaysLeft = () => {
     const today = new Date()
@@ -1084,14 +1547,52 @@ export default function ChallengeScreen() {
     setCurrentYear(targetYear)
   }
 
-  const displayMembers = isCurrentMonth
-    ? currentMonthMembers
-    : historicalData[`${currentYear}-${currentMonth}`]?.members || []
-  const sortedMembers = isCurrentMonth
-    ? [...displayMembers]
-        .sort((a, b) => b.totalProgress - a.totalProgress)
-        .map((member, index) => ({ ...member, rank: index + 1 }))
-    : (displayMembers as (ChallengeMember & { rank: number })[])
+  // 현재 월/년과 그룹에 맞는 히스토리 키 생성
+  const historyKey = activeTab ? `${activeTab}-${currentYear}-${currentMonth}` : ""
+
+  // 현재 월인지 확인
+  const isCurrentMonthYearCheck = currentMonth === currentMonthNum && currentYear === currentYearNum
+
+  // 표시할 멤버 데이터 결정 (안정적인 데이터 우선 사용)
+  const displayMembers = useMemo(() => {
+    if (!activeTab) return []
+
+    const key = `${activeTab}-${currentYear}-${currentMonth}`
+
+    // 1. 안정적인 데이터가 있으면 우선 사용
+    if (stableProgressData[key]?.members?.length > 0) {
+      return stableProgressData[key].members
+    }
+
+    // 2. 현재 월이면 currentMonthMembers 사용
+    if (isCurrentMonthYearCheck) {
+      return currentMonthMembers
+    }
+
+    // 3. 히스토리 데이터 사용
+    return historicalData[key]?.members || []
+  }, [
+    activeTab,
+    currentYear,
+    currentMonth,
+    isCurrentMonthYearCheck,
+    stableProgressData,
+    currentMonthMembers,
+    historicalData,
+  ])
+
+  // 정렬된 멤버 데이터
+  const sortedMembers = useMemo(() => {
+    // 이미 정렬/랭킹이 있는 데이터인 경우 그대로 사용
+    if (displayMembers.length > 0 && displayMembers[0].rank !== undefined) {
+      return displayMembers
+    }
+
+    // 정렬이 필요한 경우
+    return [...displayMembers]
+      .sort((a, b) => b.totalProgress - a.totalProgress)
+      .map((member, index) => ({ ...member, rank: index + 1 }))
+  }, [displayMembers])
 
   const navigation = useNavigation<RootStackNavigationProp>()
 
@@ -1160,7 +1661,6 @@ export default function ChallengeScreen() {
             </View>
           </View>
         </View>
-
         {/* Tab Navigation */}
         <View style={styles.tabContainer}>
           <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.tabScrollContent}>
@@ -1219,7 +1719,9 @@ export default function ChallengeScreen() {
             {displayMembers.length === 0 ? (
               <View style={styles.emptyStateContainer}>
                 <Text style={styles.emptyStateText}>
-                  {isCurrentMonth ? "아직 챌린지 참여자가 없어요" : "이 달은 챌린지가 없었어요"}
+                  {isCurrentMonth
+                    ? "아직 챌린지 참여자가 없어요"
+                    : `${currentYear}년 ${currentMonth}월에는 이 그룹의 챌린지 기록이 없어요`}
                 </Text>
               </View>
             ) : (
